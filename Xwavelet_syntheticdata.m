@@ -128,7 +128,8 @@ for f_idx = 1:numFrames
 
 % Quick look at windowing for sanity check 
     if (f_idx == 1)
-        figure; imshow(data_filt); title('Windowed data example')
+        figure; imshow( circshift(data_filt,[2*max(Scales),2*max(Scales)]));
+        title('Edge artifacts on cared-about scales?')
     end
 
 %%% COMPUTE 2D COMPLEX TRANSFORM, CALIBRATE TO PROJECTION UNIT (factor 2/S) 
@@ -203,8 +204,24 @@ fprintf('\nAll done. Single–frame and cross–temporal wavelets complete.\n');
 
 
 %% COARSE-GRAINING INTO ROI OR SQUARES, ABOUT 5 DEGREES LAT-LON
-% Initialize a cell array.
-%powerBatchSumCells = cell(num_squares_y, num_squares_x);
+
+npix5deg = 555/pixel_size_km  % 5 degrees 
+
+fun = @(block_struct) mean(block_struct.data, 'all');
+new_matrix = blockproc(data_pre, [npix5deg npix5deg], fun);
+figure; imagesc(new_matrix); title('mean data in 5 degree blocks');
+size(new_matrix)
+
+% Ready to use for xspec, spec, etc. except it only workd on 2d arrays!
+% Need to loop using blockproc or imresize
+
+[rows, cols] = size(new_matrix); % from above, size from data_pre 
+downsampledspec = zeros(rows, cols, length(Scales), length(Angles));
+for S = 1:length(Scales)
+    for A = 1:length(Angles)
+        downsampledspec(:,:,i,j) = blockproc(spec_full(:,:,S,A), [npix5deg npix5deg], fun);
+    end
+end
 
 
 %% HELPER FUNCTIONS
