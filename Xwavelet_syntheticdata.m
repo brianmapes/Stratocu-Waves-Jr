@@ -205,7 +205,7 @@ fprintf('\nAll done. Single–frame and cross–temporal wavelets complete.\n');
 
 %% COARSE-GRAINING INTO ROI OR SQUARES, ABOUT 5 DEGREES LAT-LON
 
-npix5deg = 555/pixel_size_km  % 5 degrees 
+npix5deg = 555/pixel_size_km  % 5 degrees blocks 
 
 fun = @(block_struct) mean(block_struct.data, 'all');
 new_matrix = blockproc(data_pre, [npix5deg npix5deg], fun);
@@ -216,10 +216,10 @@ size(new_matrix)
 % Need to loop using blockproc or imresize
 
 [rows, cols] = size(new_matrix); % from above, size from data_pre 
-downsampledspec = zeros(rows, cols, length(Scales), length(Angles));
+coarse_5deg_spec = zeros(rows, cols, length(Scales), length(Angles));
 for S = 1:length(Scales)
     for A = 1:length(Angles)
-        downsampledspec(:,:,i,j) = blockproc(spec_full(:,:,S,A), [npix5deg npix5deg], fun);
+        coarse_5deg_spec(:,:,i,j) = blockproc(spec_full(:,:,S,A), [npix5deg npix5deg], fun);
     end
 end
 
