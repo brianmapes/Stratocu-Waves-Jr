@@ -11,8 +11,12 @@
 %% 1) VARIABLES SETUP
 
 %----------- FOLDER/PATH SETTINGS ---------------------------
-rootSepacDir = 'C:\Users\admin\Box\GWaves_2023_10_11-14_SEPAC\syn_u10_200km_warp_mod3';
-outDir = 'C:\Users\admin\Box\GWaves_2023_10_11-14_SEPAC\syn_u10_200km_warp_mod3\Results';
+rootSepacDir = '/Users/bmapes/GitHub/stratocu_waves/DATA/syn_u10_200km_warp_mod3';
+%syn_scwave_warp_mod.mp4    syn_u10_100km_warp_mod1/ 
+%syn_scwave_warp_modx5.mp4  syn_u10_200km_warp_mod3/
+
+
+outDir = '/Users/bmapes/Downloads';
 
 %----------- INSTRUMENT SETTINGS ----------------------------
 instrument = 'VIS';  % Choose 'IR' or 'VIS'
@@ -26,8 +30,8 @@ original_px_km = degrees_per_pixel * km_per_degree;
 pixel_size_km = original_px_km * shrinkfactor;
 
 %----------- WAVELET PARAMETERS -----------------------------
-Angles = 0 : pi/(7*2) : pi;           % Wavelet angles (in radians)
-Scales = [2, 4, 8, 16, 32, 64, 128];       % Wavelet scales in pixel units
+Angles = 0 : pi/(7*2) : pi;               % Wavelet angles (in radians)
+Scales = [2, 4, 8, 16, 32, 64, 128];      % Wavelet scales in pixel units
 NANGLES = numel(Angles);                  % Number of angles
 NSCALES = numel(Scales);                  % Number of scales
 
