@@ -4,8 +4,10 @@ clear all  % All figures and data cleared out
 close all 
 
 %----------- FOLDER/PATH SETTINGS ---------------------------
-rootSepacDir = '/Users/bmapes/Github/stratocu_waves/DATA/syn_uv5const_200kmwarpmod2'
+%rootSepacDir = '/Users/bmapes/Github/stratocu_waves/DATA/syn_uv5const_200kmwarpmod2'
 %rootSepacDir = '/Users/bmapes/Github/stratocu_waves/DATA/syn_uv5const_nowave'
+%rootSepacDir = '/Users/bmapes/Github/stratocu_waves/DATA/syn_uv5div_200kmwarpmod2'
+rootSepacDir = '/Users/bmapes/Github/stratocu_waves/DATA/syn_uv5const_400kmwarpmod0'
 
 outDir = '/Users/bmapes/Downloads/Results';
 if ~exist(outDir, 'dir')
@@ -165,52 +167,67 @@ for f_idx = 1:numFrames
         batchPairCount= batchFrameCount + 1;
     end
     
-    % Update 'previous' for pairwise loop.
+
+%% PLOTS OF THE RUNNING MEAN RESULT FROM BATCH SO FAR 
+
+% PIV pair 
+    if(f_idx > 1)
+        velocityField = calculatePIV(prevImage, data, 1);  % 1 is shrinkfactor
+        uclip = clip(velocityField(:,:,3),-0.1,0.1);
+        vclip = clip(velocityField(:,:,4),-0.1,0.1);
+        div = divergence(uclip,vclip);
+
+        % display with coarser resolution 
+        skip=2;
+        fun = @(block_struct) mean(block_struct.data, 'all');
+        figure; imagesc(blockproc(div,[skip skip],fun),[-1 1]*1e-1); 
+        colorbar; hold on; 
+        quiver(uclip(1:skip:end,1:skip:end), vclip(1:skip:end,1:skip:end)) 
+    
+% Roses from pair  
+        areaxspec = mean(mean(xspecBatchSum, 1, 'omitnan'), 2, 'omitnan')/(batchPairCount);
+        areapspec = mean(mean(powerBatchSum, 1, 'omitnan'), 2, 'omitnan')/(batchFrameCount);
+
+        cohrose = squeeze( abs(areaxspec)./areapspec );
+        pdifrose= squeeze( angle(areaxspec)          );
+        speedrose = pdifrose*0;          % right sized container
+        for ang = 1:length(Angles)       % at each angle, convert to m/s speed
+            speedrose(:,ang) = pdifrose(:,ang)/3.1415 .* transpose(Scales) ...
+                *1000*pixel_size_km /time_resolution;
+        end
+    
+        figure;
+        subplot(131)
+        contourf(squeeze(cohrose),30); colorbar; 
+        title("coh, frame number ",batchFrameCount)
+    
+        subplot(132)
+        imagesc(squeeze(pdifrose)); colorbar; 
+        title('phase diff')
+        h = gca; h.YDir = 'normal'; 
+    
+        subplot(133)
+        imagesc(squeeze(speedrose)); colorbar; 
+        title('speed (m/s)')
+        h = gca; h.YDir = 'normal';
+    end % frame index >1 
+    
+% Update 'previous' for pairwise loop.
     prevWaveletSpec = spec_full;
-
-%%% PLOTS OF THE RUNNING MEAN RESULT FROM BATCH SO FAR 
-
-    %% FROM POOL MEAN, MAKE WHOLE-AREA MEAN COH AND PHASE & SPEED ROSES  
-
-    areaxspec = mean(mean(xspecBatchSum, 1, 'omitnan'), 2, 'omitnan')/(batchPairCount);
-    areapspec = mean(mean(powerBatchSum, 1, 'omitnan'), 2, 'omitnan')/(batchFrameCount);
-
-    cohrose = squeeze( abs(areaxspec)./areapspec );
-    pdifrose= squeeze( angle(areaxspec)          );
-    speedrose = pdifrose*0;          % right sized container
-    for ang = 1:length(Angles)       % at each angle, convert to m/s speed
-        speedrose(:,ang) = pdifrose(:,ang)/3.1415 .* transpose(Scales) ...
-            *1000*pixel_size_km /time_resolution;
-    end
-
-    figure;
-    subplot(131)
-    contourf(squeeze(cohrose),30); colorbar; 
-    title("coh, frame number ",batchFrameCount)
-
-    subplot(132)
-    imagesc(squeeze(pdifrose)); colorbar; 
-    title('phase diff')
-    h = gca; h.YDir = 'normal'; 
-
-    subplot(133)
-    imagesc(squeeze(speedrose)); colorbar; 
-    title('speed (m/s)')
-    h = gca; h.YDir = 'normal';
+    prevImage = data;
 
 end % FRAME LOOP 
 
 fprintf('\nAll done. Single–frame and cross–temporal wavelets complete.\n');
 
-
 %% COARSE-GRAINING INTO ROI OR SQUARES, ABOUT 5 DEGREES LAT-LON
 
-npix5deg = 555/pixel_size_km  % 5 degrees blocks 
+npix5deg = 555/pixel_size_km;  % 5 degrees blocks 
 
 fun = @(block_struct) mean(block_struct.data, 'all');
 new_matrix = blockproc(data_pre, [npix5deg npix5deg], fun);
 figure; imagesc(new_matrix); title('mean data in 5 degree blocks');
-size(new_matrix)
+size(new_matrix);  % 9 9, integer, clipping of extra from end
 
 % Ready to use for xspec, spec, etc. except it only workd on 2d arrays!
 % Need to loop using blockproc or imresize
@@ -219,7 +236,7 @@ size(new_matrix)
 coarse_5deg_spec = zeros(rows, cols, length(Scales), length(Angles));
 for S = 1:length(Scales)
     for A = 1:length(Angles)
-        coarse_5deg_spec(:,:,i,j) = blockproc(spec_full(:,:,S,A), [npix5deg npix5deg], fun);
+        coarse_5deg_spec(:,:,S,A) = blockproc(spec_full(:,:,S,A), [npix5deg npix5deg], fun);
     end
 end
 
@@ -248,5 +265,38 @@ function data_win = applyRectangularWindow(data_in, radius_factor, decay_rate)
     
     % Blend data_in with the median (instead of fading to zero):
     data_win = window .* data_in + (1 - window) .* median_val;
+end
+%--------------------------------------------------------------------------
+function velocityField = calculatePIV(image1, image2, shrinkfactor)
+    % Calculate PIV between two images
+    [xtable, ytable, utable, vtable, ~, ~, ~] = piv_FFTmulti(...
+    image1, image2, ...          % Input images
+    64, ...                      % Initial interrogation area (Pass 1)
+    32, ...                      % Initial step (Pass 1)
+    2, ...                       % Subpixel method (2D Gaussian)
+    [], ...                      % mask_inpt (no mask)
+    [], ...                      % roi_inpt (full image)
+    3, ...                       % passes (3 iterations)
+    32, ...                      % int2 (Pass 2 IA)
+    16, ...                      % int3 (Pass 3 IA)
+    0, ...                       % int4 (unused)
+    '*linear', ...               % imdeform method
+    0, ...                       % repeat (no repeated correlation)
+    1, ...                       % mask_auto (disable autocorrelation)
+    1, ...                       % do_linear_correlation (enable)
+    0, ...                       % do_correlation_matrices (disable)
+    0, ...                       % repeat_last_pass (no)
+    0.025 ...                    % delta_diff_min (convergence threshold)
+);
+
+    % Downsample the velocity vectors by the shrinkfactor
+    downsample_factor = shrinkfactor;
+    xtable_ds = xtable(1:downsample_factor:end, 1:downsample_factor:end);
+    ytable_ds = ytable(1:downsample_factor:end, 1:downsample_factor:end);
+    utable_ds = utable(1:downsample_factor:end, 1:downsample_factor:end);
+    vtable_ds = vtable(1:downsample_factor:end, 1:downsample_factor:end);
+
+    % Combine the downsampled velocity vectors into a single matrix
+    velocityField = cat(3, xtable_ds, ytable_ds, utable_ds, vtable_ds);
 end
 %--------------------------------------------------------------------------
