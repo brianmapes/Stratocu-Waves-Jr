@@ -4,15 +4,15 @@ clear all  % All figures and data cleared out
 close all 
 
 %----------- FOLDER/PATH SETTINGS ---------------------------
-%rootSepacDir = '/Users/bmapes/Github/stratocu_waves/DATA/syn_uv5const_200kmwarpmod2'
-%rootSepacDir = '/Users/bmapes/Github/stratocu_waves/DATA/syn_uv5const_nowave'
+rootSepacDir = '/Users/bmapes/Github/stratocu_waves/DATA/syn_uv5const_200kmwarpmod2'
+rootSepacDir = '/Users/bmapes/Github/stratocu_waves/DATA/syn_uv5const_nowave'
 %rootSepacDir = '/Users/bmapes/Github/stratocu_waves/DATA/syn_uv5div_200kmwarpmod2'
-rootSepacDir = '/Users/bmapes/Github/stratocu_waves/DATA/syn_uv5const_400kmwarpmod0'
+%rootSepacDir = '/Users/bmapes/Github/stratocu_waves/DATA/syn_uv5const_400kmwarpmod0'
+%rootSepacDir = '/Users/bmapes/Github/stratocu_waves/DATA/syn_uv5div_400kmwarpmod5'
 
-outDir = '/Users/bmapes/Downloads/Results';
-if ~exist(outDir, 'dir')
-    mkdir(outDir);
-end
+%----------- Scatter plot one particular angle and scale ------
+iScatS = 3;
+iScatA = 7;
 
 %----------- SPATIAL SCALING & RESIZING --------------------
 degrees_per_pixel = 0.04;     % Degrees per pixel (typical for GOES)
@@ -26,8 +26,13 @@ pixel_size_km = original_px_km * shrinkfactor;
 time_resolution = 1800;
 
 %----------- WAVELET PARAMETERS -----------------------------
-Angles = 0 : pi/(7*2) : pi;               % Wavelet angles (in radians)
-Scales = [2, 4, 8, 16, 32, 64, 128];      % Wavelet scales in pixel units
+Angles = 0 : pi/(7*2) : pi;               % 15 Wavelet angles (in radians)
+Scales = [2, 4, 8, 16, 32, 64, 128];      % 7 Wavelet scales in pixel units
+
+% Higher res, slower computations
+%Angles = 0 : pi/(7*3) : pi;               %22 Wavelet angles (in radians)
+%Scales = 2.^( (1:21)/3. )                 %21 scales
+
 NANGLES = numel(Angles);                  % Number of angles
 NSCALES = numel(Scales);                  % Number of scales
 
@@ -73,7 +78,7 @@ DisplayValueSpeed = [-30;30];
  end
 
 numFrames = numel(pngFiles);
-fprintf('Found %d frames in dir %s.\n', numFrames, outDir);
+fprintf('Found %d frames in dir %s.\n', numFrames);
 
 %% Initializations of empty containers 
 
@@ -128,11 +133,12 @@ for f_idx = 1:numFrames
     end    
     [rowsF, colsF] = size(data_pre);
 
-% Quick look at windowing for sanity check 
-    if (f_idx == 1)
-        figure; imshow( circshift(data_filt,[2*max(Scales),2*max(Scales)]));
-        title('Edge artifacts on cared-about scales?')
-    end
+% Quick look at windowing for sanity check, 0.6 and 10 looks okay
+%    if (f_idx == 1)
+%        figure; 
+%        imshow( circshift(data_filt,[2*max(Scales),2*max(Scales)]));
+%        title('Edge artifacts on cared-about scales?');
+%    end
 
 %%% COMPUTE 2D COMPLEX TRANSFORM, CALIBRATE TO PROJECTION UNIT (factor 2/S) 
     if CustomWavelet
@@ -154,6 +160,8 @@ for f_idx = 1:numFrames
         specBatchSum = spec_full;
         powerBatchSum= abs(spec_full).^2;
         xspecBatchSum= spec_full*0.;   % right sized container for sums
+        xspecBatchSum_nonadv= spec_full*0.;   % right sized container for sums
+
     else
         specBatchSum = specBatchSum + spec_full;
         powerBatchSum= powerBatchSum+ abs(spec_full).^2; 
@@ -162,54 +170,95 @@ for f_idx = 1:numFrames
 %%% POOLING XSPEC IF IT EXISTS ----
     if ~isempty(prevWaveletSpec)
         % Compute the complex cross–wavelet product between previous and current frame.
-        crossSpec_product = prevWaveletSpec .* conj(spec_full);
-        xspecBatchSum = xspecBatchSum + crossSpec_product;
+        crossSpec = prevWaveletSpec .* conj(spec_full);
+        xspecBatchSum        = xspecBatchSum + crossSpec;
         batchPairCount= batchFrameCount + 1;
     end
-    
 
 %% PLOTS OF THE RUNNING MEAN RESULT FROM BATCH SO FAR 
+    if(f_idx > 1)
 
 % PIV pair 
-    if(f_idx > 1)
         velocityField = calculatePIV(prevImage, data, 1);  % 1 is shrinkfactor
         uclip = clip(velocityField(:,:,3),-0.1,0.1);
         vclip = clip(velocityField(:,:,4),-0.1,0.1);
         div = divergence(uclip,vclip);
-
-        % display with coarser resolution 
-        skip=2;
+        skip=3; % display with coarser resolution 
         fun = @(block_struct) mean(block_struct.data, 'all');
         figure; imagesc(blockproc(div,[skip skip],fun),[-1 1]*1e-1); 
         colorbar; hold on; 
         quiver(uclip(1:skip:end,1:skip:end), vclip(1:skip:end,1:skip:end)) 
     
-% Roses from pair  
+% Roses from batch so far   
         areaxspec = mean(mean(xspecBatchSum, 1, 'omitnan'), 2, 'omitnan')/(batchPairCount);
         areapspec = mean(mean(powerBatchSum, 1, 'omitnan'), 2, 'omitnan')/(batchFrameCount);
 
+% speed from pdif
         cohrose = squeeze( abs(areaxspec)./areapspec );
         pdifrose= squeeze( angle(areaxspec)          );
         speedrose = pdifrose*0;          % right sized container
         for ang = 1:length(Angles)       % at each angle, convert to m/s speed
-            speedrose(:,ang) = pdifrose(:,ang)/3.1415 .* transpose(Scales) ...
-                *1000*pixel_size_km /time_resolution;
+            speedrose(:,ang) = pdifrose(:,ang)/3.1415 .* ...
+                (transpose(Scales)*1000*pixel_size_km) /time_resolution;
         end
     
         figure;
-        subplot(131)
+        subplot(221)
         contourf(squeeze(cohrose),30); colorbar; 
         title("coh, frame number ",batchFrameCount)
     
-        subplot(132)
-        imagesc(squeeze(pdifrose)); colorbar; 
+        subplot(222)
+        imagesc(squeeze(pdifrose), [-pi pi]); colorbar; 
         title('phase diff')
         h = gca; h.YDir = 'normal'; 
     
-        subplot(133)
+        subplot(223)
         imagesc(squeeze(speedrose)); colorbar; 
         title('speed (m/s)')
         h = gca; h.YDir = 'normal';
+
+% Estimate pdifrose_adv from a global windspeed WS and direction WD 
+% from speedrose scales 1:5
+        speed = mean(speedrose(1:5,:),1); speed360 = [speed -speed(2:end)];
+
+        [WS,WD] = max(speed360);  % Poor mans harmonic fit
+
+% With that estimate, construct an expected pdifrose_adv & subtract it
+        pdifrose_adv = pdifrose*0;       % right sized container
+        for ang = 1:length(Angles)   % at each angle, convert speed2angle
+            advspeed = -WS*sin(Angles(ang) + Angles(WD));
+            pdifrose_adv(:,ang) = (advspeed*time_resolution)./ ... 
+                (Scales*pixel_size_km*1000) *pi;
+        end
+        subplot(224)
+        imagesc(squeeze(pdifrose - pdifrose_adv), [-pi pi]/5.); colorbar; 
+        title('phase dif subtracting advxn')
+        h = gca; h.YDir = 'normal';
+
+
+        % Check winds with a plot 100 that accumulates over pairs
+        figure (100); hold on; 
+        scatter(Angles, speed); 
+        scatter(Angles,-WS*sin(Angles + Angles(WD)))
+        title('Advecting wind estimate')
+
+
+% Keep a scatterplot (111) of one special Scale-Angle bin's coh&speed 
+% Scatter what points? 5 degree block averages of course
+        npix5deg = 555/pixel_size_km;  % 5 degrees blocks 
+        fun = @(block_struct) mean(block_struct.data, 'all');
+
+        specPrevBlocks = blockproc(prevWaveletSpec(:,:,iScatS,iScatA), ...
+                                        [npix5deg npix5deg], fun);
+        specNowBlocks = blockproc(spec_full(:,:,iScatS,iScatA), ...
+                                        [npix5deg npix5deg], fun);
+        figure; hold on; 
+        complexScatterPlot(specPrevBlocks(:), ... 
+                           specNowBlocks (:) );
+        figure(111); hold on; 
+        complexScatterPlot(specPrevBlocks(:), ... 
+                           specNowBlocks (:) );
+
     end % frame index >1 
     
 % Update 'previous' for pairwise loop.
@@ -226,8 +275,8 @@ npix5deg = 555/pixel_size_km;  % 5 degrees blocks
 
 fun = @(block_struct) mean(block_struct.data, 'all');
 new_matrix = blockproc(data_pre, [npix5deg npix5deg], fun);
-figure; imagesc(new_matrix); title('mean data in 5 degree blocks');
-size(new_matrix);  % 9 9, integer, clipping of extra from end
+% figure; imagesc(new_matrix); title('mean data in 5 degree blocks');
+%size(new_matrix);  % 9 9, integer, clipping of extra from end
 
 % Ready to use for xspec, spec, etc. except it only workd on 2d arrays!
 % Need to loop using blockproc or imresize
@@ -300,3 +349,22 @@ function velocityField = calculatePIV(image1, image2, shrinkfactor)
     velocityField = cat(3, xtable_ds, ytable_ds, utable_ds, vtable_ds);
 end
 %--------------------------------------------------------------------------
+function [squaredCoherence, meanPhase] = complexScatterAnalysis(complexData)
+    % complexData: A matrix where each column represents a set of complex numbers.
+
+    numSets = size(complexData, 2);
+    if numSets < 2
+        error('At least two sets of complex numbers are required.');
+    end
+
+    % Calculate squared coherence (for the first two columns)
+    crossSpectrum = mean(complexData(:, 1) .* conj(complexData(:, 2)));
+    powerSpectrum1 = mean(abs(complexData(:, 1)).^2);
+    powerSpectrum2 = mean(abs(complexData(:, 2)).^2);
+    squaredCoherence = abs(crossSpectrum).^2 / (powerSpectrum1 * powerSpectrum2);
+
+    % Calculate mean phase difference (for the first two columns)
+    phaseDifferences = angle(complexData(:, 2) ./ complexData(:, 1));
+    meanPhase = mean(phaseDifferences);
+end
+%----------------------------------------------------------------------
