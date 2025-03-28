@@ -14,8 +14,8 @@ startDate = datetime(2023, 10, 12, 1, 0, 0); % start processing time
 endDate   = datetime(2023, 10, 12, 3, 30, 0); % end processing time
 
 %----------- FOLDER/PATH SETTINGS ---------------------------
-rootSepacDir = 'C:\Users\admin\Box\GWaves_2023_10_11-14_SEPAC';
-sourceRoot   = 'C:\Users\admin\Box\GOES2go_satellite_downloads';  % (Used in renaming)
+rootSepacDir = '/Users/bmapes/Box/GWaves_2023_10_11-14_SEPAC';
+sourceRoot   = '/Users/bmapes/Box/GOES2go_satellite_downloads';  % (Used in renaming)
 
 %----------- INSTRUMENT SETTINGS ----------------------------
 % (Here we process only one instrument; change as needed)
