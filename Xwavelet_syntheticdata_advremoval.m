@@ -4,15 +4,15 @@ clear all  % All figures and data cleared out
 close all 
 
 %----------- FOLDER/PATH SETTINGS ---------------------------
-rootSepacDir = '/Users/bmapes/Github/stratocu_waves/DATA/syn_uv5const_200kmwarpmod2';
+%rootSepacDir = '/Users/bmapes/Github/stratocu_waves/DATA/syn_uv5const_200kmwarpmod2';
 %rootSepacDir = '/Users/bmapes/Github/stratocu_waves/DATA/syn_uv5const_nowave';
 %rootSepacDir = '/Users/bmapes/Github/stratocu_waves/DATA/syn_uv5div_200kmwarpmod2'
-%rootSepacDir = '/Users/bmapes/Github/stratocu_waves/DATA/syn_uv5const_400kmwarpmod0'
+rootSepacDir = '/Users/bmapes/Github/stratocu_waves/DATA/syn_uv5const_400kmwarpmod0'
 %rootSepacDir = '/Users/bmapes/Github/stratocu_waves/DATA/syn_uv5div_400kmwarpmod5'
 
-%----------- Scatter plot one particular angle and scale ------
-iScatS = 3;
-iScatA = 7;
+%----------- Scatter plot one particular angle and scale (3,7 or 4,4)------
+iScatS = 4;
+iScatA = 4;
 
 %----------- SPATIAL SCALING & RESIZING --------------------
 degrees_per_pixel = 0.04;     % Degrees per pixel (typical for GOES)
@@ -236,7 +236,7 @@ for f_idx = 1:numFrames
             title('Residual (Actual-Advective) difference'); colorbar;
             clim(colorLimits); % Set color limits to match the first subplot
 
-        subplot(224)
+        %subplot(224)
         %imagesc( real(spec_full    (:,:,iScatS+1,iScatA)-...
         %              spec_full_res(:,:,iScatS+1,iScatA)) );
         %   title('Residual (Actual-Advective) diff for wave S,A'); colorbar;
