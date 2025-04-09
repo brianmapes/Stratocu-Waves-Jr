@@ -10,7 +10,8 @@
 
 %% 1) VARIABLES SETUP
 %----------- FOLDER/PATH SETTINGS ---------------------------
-rootSepacDir = '/Users/bmapes/GitHub/stratocu_waves/DATA/syn_u10_200km_warp_mod3';
+rootSepacDir = '/Users/bmapes/GitHub/stratocu_waves/DATA/syn_uv5const_200kmwarpmod2';
+
 %syn_scwave_warp_mod.mp4    syn_u10_100km_warp_mod1/ 
 %syn_scwave_warp_modx5.mp4  syn_u10_200km_warp_mod3/
 
