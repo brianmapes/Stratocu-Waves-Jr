@@ -176,6 +176,7 @@ if createOutputVideo && numFrames > 0 % Check if video creation is enabled and f
     fprintf('\n--- Generating Output Video ---\n');
 
     singleOutDir = 'C:\Users\admin\Documents\GitHub\Stratocu-Waves-Jr\test';
+    singleOutDir = '/Users/bmapes/GitHub/Stratocu-Waves-Jr/test';
 
     % Define output video filename (customize as needed)
     videoFileName = sprintf('%s_Video_%s_to_%s.mp4', ...
@@ -234,6 +235,7 @@ for f_idx = 1:numFrames
 
     %singleOutDir = fullfile(rootSepacDir, 'Test');
     singleOutDir = 'C:\Users\admin\Documents\GitHub\Stratocu-Waves-Jr\test';
+    singleOutDir = '/Users/bmapes/GitHub/Stratocu-Waves-Jr/test';
     if ~exist(singleOutDir, 'dir')
         mkdir(singleOutDir);
     end
@@ -1046,6 +1048,7 @@ end
 % Compute the phase difference robustly using complex representation
 diffPhase = angle(exp(1i*(pdif - phi_pred)));
 % Weight by the coherence (or amplitude)
+%%% nanmean requires add-on of Statistics and Machine Learning Toolbox
 w = coh;
 err = nanmean( (w(:).*diffPhase(:)).^2 );
 end
