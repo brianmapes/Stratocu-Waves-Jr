@@ -9,16 +9,12 @@
 % windowing, preprocessing, etc.) are defined in the "Variables Setup" section.
 
 %% 1) VARIABLES SETUP
-%----------- DATE/TIME SETTINGS ---------------------------
-startDate = datetime(2023, 10, 12, 1, 0, 0); % start processing time
-endDate   = datetime(2023, 10, 12, 3, 30, 0); % end processing time
-
 %----------- FOLDER/PATH SETTINGS ---------------------------
-rootSepacDir = 'C:\Users\admin\Box\GWaves_2023_10_11-14_SEPAC';
-sourceRoot   = 'C:\Users\admin\Box\GOES2go_satellite_downloads';  % (Used in renaming)
+rootSepacDir = 'C:\Users\admin\Box\GWaves_2023_10_11-14_SEPAC\syn_u10_200km_warp_mod3';
+outDir = 'C:\Users\admin\Box\GWaves_2023_10_11-14_SEPAC\syn_u10_200km_warp_mod3\Results';
 
 %----------- INSTRUMENT SETTINGS ----------------------------
-instrument = 'IR';  % Choose 'IR' or 'VIS'
+instrument = 'VIS';  % Choose 'IR' or 'VIS'
 
 %----------- SPATIAL SCALING & RESIZING --------------------
 degrees_per_pixel = 0.04;     % Degrees per pixel (typical for GOES)
@@ -154,20 +150,36 @@ videoFrameRate = 5;          % Frames per second for the output video
 videoApplyShrink = true;     % Use true to apply shrinkfactor to video frames
 videoApplyWindow = true;     % Use true to apply windowing to video frames
 
-%% 2) RETRIEVE FILE LIST
-% Raw data is assumed to be in:
-%    <rootSepacDir>\INSTRUMENT\Data
-dataDir = fullfile(rootSepacDir, upper(instrument), 'Data');
-if ~exist(dataDir, 'dir')
-    error('Data directory for %s not found: %s', instrument, dataDir);
-end
-[fNames, fTimes, varName] = getDateRangeFiles(dataDir, startDate, endDate);
-numFrames = numel(fTimes);
-if numFrames == 0
-    fprintf('No frames found for %s in the given time period.\n', instrument);
-    return;
-end
-fprintf('Found %d frames for instrument %s.\n', numFrames, instrument);
+ %% 2) GATHER PNG FILES
+    if ~exist(rootSepacDir, 'dir')
+        error('Folder does not exist: %s', rootSepacDir);
+    end
+    pngFiles = dir(fullfile(rootSepacDir, '*.png'));
+    if isempty(pngFiles)
+        fprintf('No PNG images found in %s\n', rootSepacDir);
+        return;
+    end
+
+    % Let’s extract possible date/time from the filename, else fallback on file datenum
+    fileInfos = [];
+    for iF = 1:numel(pngFiles)
+        fn    = pngFiles(iF).name;
+        fpath = fullfile(rootSepacDir, fn);
+        t = tryExtractDateFromFilename(fn);
+        if isnat(t)
+            % fallback: use file's datenum
+            t = datetime(pngFiles(iF).datenum, 'ConvertFrom','datenum');
+        end
+        fileInfos(end+1).fname = fn;
+        fileInfos(end).fdate   = t;
+        fileInfos(end).fpath   = fpath;
+    end
+    % Sort by date
+    [~, idxSort] = sort([fileInfos.fdate]);
+    fileInfos    = fileInfos(idxSort);
+    
+    numFrames = numel(pngFiles);
+    fprintf('Found %d frames for instrument %s.\n', numFrames, instrument);
 
 %% 2.1) OPTIONAL VIDEO GENERATION
 if createOutputVideo && numFrames > 0 % Check if video creation is enabled and frames exist
@@ -202,6 +214,8 @@ elseif createOutputVideo
     fprintf('\nVideo creation skipped: No frames were processed.\n');
 end
 
+
+
 %% 3) MAIN PROCESSING LOOP (Single instrument + cross–temporal coherence)
 %    Rewritten to accumulate sums over the entire domain first.
 
@@ -225,22 +239,26 @@ else
 end
 
 for f_idx = 1:numFrames
-    % ---- Prepare basic info about this frame ----
-    thisTime = fTimes(f_idx);
+
+    thisFileName = fileInfos(f_idx).fname;
+    thisFullPath = fileInfos(f_idx).fpath;
+    thisTime     = fileInfos(f_idx).fdate;
+    
     frameDateStr = datestr(thisTime, 'yyyy_mm_dd_HHMMSS');
-    fprintf('\nProcessing frame [%d/%d]: %s\n', f_idx, numFrames, frameDateStr);
+    fprintf('\nFrame [%d/%d]: %s\n', f_idx, numel(fileInfos), frameDateStr);
 
-    %singleOutDir = fullfile(rootSepacDir, 'Test');
-    singleOutDir = 'C:\Users\admin\Documents\GitHub\Stratocu-Waves-Jr\test';
+    singleOutDir = fullfile(outDir, 'PerFrame');
     if ~exist(singleOutDir, 'dir')
-        mkdir(singleOutDir);
+    mkdir(singleOutDir);
     end
-    singleNcFile = fullfile(singleOutDir, sprintf('FrameWavelet_%s.nc', frameDateStr));
 
-    % ---- Read the raw data from file ----
-    thisFileName = fNames{f_idx};
-    thisFullPath = fullfile(dataDir, thisFileName);
-    data = double(ncread(thisFullPath, varName));
+    % READ THE PNG as double precision (range ~[0,1] if 8-bit):
+    rawImg = imread(thisFullPath);
+    if ndims(rawImg) == 3
+        % If it's RGB, convert to grayscale
+        rawImg = rgb2gray(rawImg);
+    end
+    data = double(rawImg) / 255;  % scale to [0..1], or remove /255 if your images are already [0..1]
 
     % ---- On the first frame, store base_frame & possibly precompute synthetic-wave grids ----
     if f_idx == 1
@@ -337,7 +355,6 @@ for f_idx = 1:numFrames
     if shrinkfactor ~= 1
         data_pre = imresize(data_pre, invshrinkfactor);
     end
-
     if doWindow
         switch lower(windowType)
             case 'radial'
@@ -395,12 +412,11 @@ for f_idx = 1:numFrames
         % Also accumulate a sum of the phase difference:
         phase_mat = angle(crossSpec_product);
         phaseExp_sum = phaseExp_sum + exp(1i * phase_mat);
-        
     end
 
     prevWaveletSpec = spec_full;  % Store for next iteration
 
-end  
+end  % end for f_idx=1:numFrames
 
 %% 4A) ROI-BASED SUMMARIES
 
@@ -499,9 +515,14 @@ end
 
 % 1) Choose a background image. For instance, the last preprocessed frame:
 bgFrameIndex = numFrames;  % last frame
-thisFileName = fNames{bgFrameIndex};
-thisFullPath = fullfile(dataDir, thisFileName);
-data_bg = double(ncread(thisFullPath, varName));
+thisFileName = fileInfos(bgFrameIndex).fname;
+thisFullPath = fullfile(rootSepacDir, thisFileName);
+rawImg = imread(thisFullPath);
+if ndims(rawImg) == 3
+    % If it's RGB, convert to grayscale
+    rawImg = rgb2gray(rawImg);
+end
+data_bg = double(rawImg) / 255;  % scale to [0..1], or remove /255 if your images are already [0..1]
 data_bg_pre = preprocessFrame(data, instrument, methodName, ...
                 thisFullPath, thisTime, ...
                 IR_threshold, IR_fillPercentile, ...
@@ -530,7 +551,6 @@ produceOverlayWaveRose('Phase', roiSpeedCell, squares, num_squares_x, num_square
 
 produceOverlayWaveRose('Speed', roiSpeedCell, squares, num_squares_x, num_squares_y, ...
                         Scales_orig, Angles, DisplayValueSpeed, data_bg_pre, singleOutDir, 'Global SpeedWaveRose Overlay.png');
-
 
 %% 4C) Final Correction of Large-Scale Speeds
 
@@ -663,9 +683,9 @@ function produceOverlayWaveRose(metricLabel, roiCell, squares, num_squares_x, nu
     
     % Set inset scaling and offsets.
     if evalin('base','shrinkfactor')==2
-        sizeFactor = 2;    % Factor to enlarge each inset.
-        xOffset   = 0.035; % Horizontal offset between insets.
-        yOffset   = 0.08;  % Vertical offset between insets.
+        sizeFactor = 1.5;    % Factor to enlarge each inset.
+        xOffset   = 0.01; % Horizontal offset between insets.
+        yOffset   = 0.075;  % Vertical offset between insets.
     elseif evalin('base','shrinkfactor')==1
         sizeFactor = 1;
         xOffset   = -0.027; % Horizontal offset between insets.
@@ -704,7 +724,7 @@ function produceOverlayWaveRose(metricLabel, roiCell, squares, num_squares_x, nu
             
             % Create an inset axes at the computed position.
             if evalin('base','shrinkfactor')==2
-                axInset = axes('Position', [xNorm+0.07, yNorm-0.08, wNorm, hNorm]);
+                axInset = axes('Position', [xNorm+0.155, yNorm-0.08, wNorm, hNorm]);
             elseif evalin('base','shrinkfactor')==1
                 axInset = axes('Position', [xNorm+0.07, yNorm, wNorm, hNorm]);
             end
@@ -2234,6 +2254,32 @@ phi_y = toDegrees(atan2(cos(phi_rad-rotation_rad).*sin(theta_rad), ...
 phi = toDegrees(phi_rad); % [degrees] azimuth
 angles = [theta, phi]; % [degrees] zenith, azimuth
 projection = [phi_x,phi_y]; % [degrees] x-z plane, y-z plane
+end
+
+function dt = tryExtractDateFromFilename(fn)
+% Attempts to parse a date/time substring like "2023_10_12_013000" from the filename.
+    expr = '(\d{4})_(\d{2})_(\d{2})_(\d{6})';
+    mt   = regexp(fn, expr, 'tokens', 'once');
+    if isempty(mt)
+        dt = NaT;
+        return;
+    end
+    yyyy = str2double(mt{1});
+    mm   = str2double(mt{2});
+    dd   = str2double(mt{3});
+    HHMMSS = mt{4};
+    if length(HHMMSS) == 6
+        HH = str2double(HHMMSS(1:2));
+        MN = str2double(HHMMSS(3:4));
+        SS = str2double(HHMMSS(5:6));
+    else
+        HH=0; MN=0; SS=0;
+    end
+    try
+        dt = datetime(yyyy, mm, dd, HH, MN, SS);
+    catch
+        dt = NaT;
+    end
 end
 
 %==========================================================================
