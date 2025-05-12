@@ -8,19 +8,43 @@
 % All parameters and thresholds (for spatial scaling, wavelet analysis,
 % windowing, preprocessing, etc.) are defined in the "Variables Setup" section.
 
-%% 1) VARIABLES SETUP
-%----------- DATE/TIME SETTINGS ---------------------------
-startDate = datetime(2023, 10, 12, 1, 0, 0); % start processing time
-endDate   = datetime(2023, 10, 12, 3, 30, 0); % end processing time
+% figure; imagesc(data_pre); colorbar; colormap(flipud(gray));
 
+%% 1) VARIABLES SETUP
 %----------- FOLDER/PATH SETTINGS ---------------------------
 rootSepacDir = 'C:\Users\admin\Box\GWaves_2023_10_11-14_SEPAC';
 sourceRoot   = 'C:\Users\admin\Box\GOES2go_satellite_downloads';  % (Used in renaming)
 
 rootSepacDir = '/Users/bmapes/Box/GWaves_2023_10_11-14_SEPAC';
 sourceRoot   = '/Users/bmapes/Box/GOES2go_satellite_downloads';  % (Used in renaming)
-%----------- INSTRUMENT SETTINGS ----------------------------
+
+%----------- DATE/TIME/INSTRUMENT SETTINGS ---------------------------
+% Good IR wave example 
+startDate = datetime(2023, 10, 12, 1, 0, 0); % start processing time
+endDate   = datetime(2023, 10, 12, 12, 30, 0); % end processing time
 instrument = 'IR';  % Choose 'IR' or 'VIS'
+
+% VIS wave example 
+startDate = datetime(2023, 10, 11, 14, 0, 0); % start processing time
+endDate   = datetime(2023, 10, 11, 20, 30, 0); % end processing time
+instrument = 'IR';  % Choose 'IR' or 'VIS'
+
+%----------- OUTPUR FOLDER ---------------------------
+singleOutDir = 'C:\Users\admin\Documents\GitHub\Stratocu-Waves-Jr\test';
+singleOutDir = '/Users/bmapes/GitHub/Stratocu-Waves-Jr/test';
+
+if ~exist(singleOutDir, 'dir')
+    mkdir(singleOutDir);
+end
+%----------- PREPROCESSING METHOD SELECTION -----------------
+switch upper(instrument)
+    case 'IR'
+        methodName = 'highpass_50_sqrt';
+    case 'VIS'
+        methodName = 'none';
+    otherwise
+        error('Unknown instrument: %s', instrument);
+end
 
 %----------- SPATIAL SCALING & RESIZING --------------------
 degrees_per_pixel = 0.04;     % Degrees per pixel (typical for GOES)
@@ -31,7 +55,8 @@ original_px_km = degrees_per_pixel * km_per_degree;
 
 %----------- WAVELET PARAMETERS -----------------------------
 Angles = 0 : pi/(7*2) : pi;           % Wavelet angles (in radians)
-Scales = [2, 4, 8, 16, 32, 64];       % Wavelet scales in pixel units
+Scales = [2, 4, 8, 16, 32, 64, 128];       % Wavelet scales in pixel units
+Scales = 2.^[1:0.5:8];                % 2-256 in 15 logartithmic steps
 Scales_orig = Scales;                 % That will anchor the Scales values in case there's a ShrinkFactor >1
 NANGLES = numel(Angles);                  % Number of angles
 NSCALES = numel(Scales);                  % Number of scales
@@ -69,16 +94,6 @@ lowPassFilterWidth_20 = 20;
 lowPassFilterWidth_50 = 50;
 lowPassFilterWidth_100 = 100;
 
-%----------- PREPROCESSING METHOD SELECTION -----------------
-switch upper(instrument)
-    case 'IR'
-        methodName = 'highpass_50_sqrt';
-    case 'VIS'
-        methodName = 'none';
-    otherwise
-        error('Unknown instrument: %s', instrument);
-end
-
 %----------- WAVE-ROSE & PEAK DETECTION ---------------------
 nAngles_fineFactor  = 4;            % Factor to refine angular resolution in the rose plot
 nScales_fineFactor  = 4;            % Factor to refine scale resolution in the rose plot
@@ -107,15 +122,15 @@ decaySharpness = 1.2;  % Controls how sharply the baseline trend decays with sca
 upperCutoff = 16;  % Upper trusted scale
 nyquistScales= Scales_orig(1:2); % Scales that are likely to be hit by nyquist issue
 
-matrixMode = true;
+matrixMode = false;
 calibrationMatrix = [0.5;0.5;0.5;0.4;0.335;0.17;0.083]; % Empirical calibration values
 
 %----------- SYNTHETIC DATA SETTINGS ----------------------
-syntheticWaveMode = true;   % If true, superimpose a synthetic wave on a fixed base image
+syntheticWaveMode = false;   % If true, superimpose a synthetic wave on a fixed base image
 driftMode         = true;   % If true, apply a drift shift each frame using circshift
 
 % Drift parameters (in m/s) rather than pixels/frame:
-drift_speed_m_s = 15;       % e.g. 10 m/s
+drift_speed_m_s = 10;       % e.g. 10 m/s
 driftAngleDeg   = 45+90+90;       % e.g. 45 degrees (0 = right, 90 = up) // the image is inverted !!
 
 
@@ -152,9 +167,10 @@ time_resolution = 1800;
 
 %----------- VIDEO OUTPUT SETTINGS -----------------------
 createOutputVideo = true;    % Set to true to generate a video of processed frames
+onlyCreateVideo = true;    % Set to true to generate a video of processed frames
 videoFrameRate = 5;          % Frames per second for the output video
-videoApplyShrink = true;     % Use true to apply shrinkfactor to video frames
-videoApplyWindow = true;     % Use true to apply windowing to video frames
+videoApplyShrink = false;     % Use true to apply shrinkfactor to video frames
+videoApplyWindow = false;     % Use true to apply windowing to video frames
 
 %% 2) RETRIEVE FILE LIST
 % Raw data is assumed to be in:
@@ -174,9 +190,6 @@ fprintf('Found %d frames for instrument %s.\n', numFrames, instrument);
 %% 2.1) OPTIONAL VIDEO GENERATION
 if createOutputVideo && numFrames > 0 % Check if video creation is enabled and frames exist
     fprintf('\n--- Generating Output Video ---\n');
-
-    singleOutDir = 'C:\Users\admin\Documents\GitHub\Stratocu-Waves-Jr\test';
-    singleOutDir = '/Users/bmapes/GitHub/Stratocu-Waves-Jr/test';
 
     % Define output video filename (customize as needed)
     videoFileName = sprintf('%s_Video_%s_to_%s.mp4', ...
@@ -203,6 +216,10 @@ if createOutputVideo && numFrames > 0 % Check if video creation is enabled and f
 
 elseif createOutputVideo
     fprintf('\nVideo creation skipped: No frames were processed.\n');
+end
+
+if onlyCreateVideo 
+    error('Done with video-only run, stopping execution.');
 end
 
 %% 3) MAIN PROCESSING LOOP (Single instrument + cross–temporal coherence)
@@ -233,12 +250,6 @@ for f_idx = 1:numFrames
     frameDateStr = datestr(thisTime, 'yyyy_mm_dd_HHMMSS');
     fprintf('\nProcessing frame [%d/%d]: %s\n', f_idx, numFrames, frameDateStr);
 
-    %singleOutDir = fullfile(rootSepacDir, 'Test');
-    singleOutDir = 'C:\Users\admin\Documents\GitHub\Stratocu-Waves-Jr\test';
-    singleOutDir = '/Users/bmapes/GitHub/Stratocu-Waves-Jr/test';
-    if ~exist(singleOutDir, 'dir')
-        mkdir(singleOutDir);
-    end
     singleNcFile = fullfile(singleOutDir, sprintf('FrameWavelet_%s.nc', frameDateStr));
 
     % ---- Read the raw data from file ----
@@ -523,15 +534,15 @@ if doWindow
     end
 end
 
-produceOverlayWaveRose('Power', roiPowerCell, squares, num_squares_x, num_squares_y, ...
-                        Scales_orig, Angles, DisplayValuePower, data_bg_pre, singleOutDir, 'Global PowerWaveRose Overlay.png');
-
-produceOverlayWaveRose('Coherence', roiCohCell, squares, num_squares_x, num_squares_y, ...
-                        Scales_orig, Angles, DisplayValueCoherence, data_bg_pre, singleOutDir, 'Global CoherenceWaveRose Overlay.png');
-
-produceOverlayWaveRose('Phase', roiSpeedCell, squares, num_squares_x, num_squares_y, ...
-                        Scales_orig, Angles, DisplayValuePhase, data_bg_pre, singleOutDir, 'Global PhaseWaveRose Overlay.png');
-
+% produceOverlayWaveRose('Power', roiPowerCell, squares, num_squares_x, num_squares_y, ...
+%                         Scales_orig, Angles, DisplayValuePower, data_bg_pre, singleOutDir, 'Global PowerWaveRose Overlay.png');
+% 
+% produceOverlayWaveRose('Coherence', roiCohCell, squares, num_squares_x, num_squares_y, ...
+%                         Scales_orig, Angles, DisplayValueCoherence, data_bg_pre, singleOutDir, 'Global CoherenceWaveRose Overlay.png');
+% 
+% produceOverlayWaveRose('Phase', roiSpeedCell, squares, num_squares_x, num_squares_y, ...
+%                         Scales_orig, Angles, DisplayValuePhase, data_bg_pre, singleOutDir, 'Global PhaseWaveRose Overlay.png');
+% 
 produceOverlayWaveRose('Speed', roiSpeedCell, squares, num_squares_x, num_squares_y, ...
                         Scales_orig, Angles, DisplayValueSpeed, data_bg_pre, singleOutDir, 'Global SpeedWaveRose Overlay.png');
 
@@ -542,7 +553,7 @@ produceOverlayWaveRose('Speed', roiSpeedCell, squares, num_squares_x, num_square
 roiSpeedCell_corrected = limitSpeedByScale(roiSpeedCell, Scales_orig, nyquistScales, upperCutoff, beta, decayFactor, decaySharpness, matrixMode);
 
 % Then, you can use produceOverlayWaveRose to visualize the final results:
-produceOverlayWaveRose('Speed Corrected', roiSpeedCell_corrected, squares, num_squares_x, num_squares_y, ...
+produceOverlayWaveRose('Speed, Corrected', roiSpeedCell_corrected, squares, num_squares_x, num_squares_y, ...
     Scales_orig, Angles, DisplayValueSpeed, data_bg_pre, singleOutDir, 'Global Corrected SpeedWaveRose Overlay.png');
 
 %% 4D) ADVECTION CORRECTION ON ROI-BASED ROSES
@@ -558,8 +569,8 @@ if doAdvectionEstimation
 roiSpeedCell_corrected = limitSpeedByScale(roiSpeedCell_corrected, Scales, nyquistScales, upperCutoff, beta, decayFactor, decaySharpness, matrixMode);
 
 
-produceOverlayWaveRose('Speed UnAdvected', roiSpeedCell_corrected, squares, num_squares_x, num_squares_y, ...
-                        Scales_orig, Angles, DisplayValueSpeed, data_bg_pre, singleOutDir, 'Global UnAdvected SpeedWaveRose Overlay.png');
+produceOverlayWaveRose('Speed DeAdvected', roiSpeedCell_corrected, squares, num_squares_x, num_squares_y, ...
+                        Scales_orig, Angles, DisplayValueSpeed, data_bg_pre, singleOutDir, 'DeAdvected SpeedWaveRose Overlay.png');
 
 end
 
@@ -581,8 +592,8 @@ numPixels   = rowsF * colsF;       % total pixels per frame
 globalPower = squeeze( sum(sum(power_sum, 1, 'omitnan'), 2, 'omitnan') ) ...
               / (totalFrames * numPixels);
 % Produce the global wave–rose plot:
-produceAggregatedWaveRose('Power Global', globalPower, Scales_orig, Angles, ...
-    singleOutDir, 'Global PowerWaveRose', saverose, DisplayValuePower);
+%produceAggregatedWaveRose('Power Global', globalPower, Scales_orig, Angles, ...
+%    singleOutDir, 'Global PowerWaveRose', saverose, DisplayValuePower);
 
 % ----- (B) Global Coherence Wave–Rose -----
 globalCross = squeeze( sum(sum(crossSpec_sum, 1, 'omitnan'), 2, 'omitnan') );
@@ -590,8 +601,8 @@ globalB1    = squeeze( sum(sum(B1_auto_sum,   1, 'omitnan'), 2, 'omitnan') );
 globalB2    = squeeze( sum(sum(B2_auto_sum,   1, 'omitnan'), 2, 'omitnan') );
 % Compute coherence (using standard formula: |S12|^2 / (S11*S22)):
 globalCoherence = ( abs(globalCross).^2 ) ./ (globalB1 .* globalB2 );
-produceAggregatedWaveRose('Coherence Global', globalCoherence, Scales_orig, Angles, ...
-    singleOutDir, 'Global CoherenceWaveRose', saverose, DisplayValueCoherence);
+%produceAggregatedWaveRose('Coherence Global', globalCoherence, Scales_orig, Angles, ...
+%    singleOutDir, 'Global CoherenceWaveRose', saverose, DisplayValueCoherence);
 
 % ----- (C) Global Speed (Phase) Wave–Rose -----
 % For phase differences, we average the complex exponentials (for circular averaging)
@@ -603,13 +614,13 @@ produceAggregatedWaveRose('Speed Global', globalAvgPhase, Scales_orig, Angles, .
 
 % ----- (D) Global Phase Wave–Rose -----
 % For phase differences, we average the complex exponentials (for circular averaging)
-produceAggregatedWaveRose('Phase Global', globalAvgPhase, Scales_orig, Angles, ...
-    singleOutDir, 'Global PhaseWaveRose', saverose, DisplayValuePhase);
+%produceAggregatedWaveRose('Phase Global', globalAvgPhase, Scales_orig, Angles, ...
+%    singleOutDir, 'Global PhaseWaveRose', saverose, DisplayValuePhase);
 
 % ----- (E) Global Corrected Speed (Phase) Wave–Rose -----
 % Apply the correction on the global level wave–rose speeds
 globalAvgPhase_corrected = limitSpeedByScale({globalAvgPhase}, Scales_orig, nyquistScales, upperCutoff,  beta, decayFactor, decaySharpness, matrixMode);
-produceAggregatedWaveRose('Speed Corrected Global', cell2mat(globalAvgPhase_corrected), Scales_orig, Angles, ...
+produceAggregatedWaveRose('Speed, Corrected Global', cell2mat(globalAvgPhase_corrected), Scales_orig, Angles, ...
     singleOutDir, 'Global Corrected SpeedWaveRose', saverose, DisplayValueSpeed);
 
 % ----- (F) Global Unadvected Speed (Phase) + Correction Wave–Rose -----
@@ -620,8 +631,8 @@ if doAdvectionEstimation
                                    scalesForAdvection, cohThreshold, ...
                                    pixel_size_km, time_resolution);
 
-    produceAggregatedWaveRose('Speed UnAdvected', cell2mat(globalAvgPhase_unadvected),Scales_orig, Angles, ...
-        singleOutDir,  'Global UnAdvected SpeedWaveRose.png', saverose, DisplayValueSpeed);
+    produceAggregatedWaveRose('Speed DeAdvected', cell2mat(globalAvgPhase_unadvected),Scales_orig, Angles, ...
+        singleOutDir,  'Global DeAdvected SpeedWaveRose.png', saverose, DisplayValueSpeed);
 
 end
 
@@ -728,7 +739,6 @@ function produceOverlayWaveRose(metricLabel, roiCell, squares, num_squares_x, nu
     exportgraphics(fig, overlayFileName, 'Resolution', 400);
     fprintf('Saved %s wave–rose overlay to: %s\n', metricLabel, overlayFileName);
 end
-
 function DisplayAggregatedWaveRose(labelStr, waveRoseMat, Scales, Angles, axHandle, maxVal)
 % DISPLAYAGGREGATEDWAVEROSE Displays an aggregated wave-rose plot in a provided axes.
 %
@@ -840,7 +850,6 @@ function DisplayAggregatedWaveRose(labelStr, waveRoseMat, Scales, Angles, axHand
         line(axHandle, [0 x_label], [0 y_label], 'Color', [0.5 0.5 0.5], 'LineStyle', '--');
     end
 end
-
 function produceAggregatedWaveRose(labelStr, waveRoseMat, Scales, Angles, outDir, outName, saverose, maxVal)
     if nargin < 7
         saverose = true;
@@ -1319,7 +1328,7 @@ function createVideoFromFrames(fNames, fTimes, dataDir, varName, ...
 
     % --- Initialize Video Writer ---
     try
-        writerObj = VideoWriter(outputVideoFile, 'MPEG-4'); % Using MPEG-4 for compatibility
+        writerObj = VideoWriter(outputVideoFile, 'Motion JPEG AVI'); % Using 'MPEG-4' for compatibility
         writerObj.FrameRate = frameRate;
         open(writerObj);
     catch ME
@@ -1359,6 +1368,12 @@ function createVideoFromFrames(fNames, fTimes, dataDir, varName, ...
         if applyShrink && shrinkfactor ~= 1
             data_pre = imresize(data_pre, invshrinkfactor);
         end
+        
+        % ---- Resize to an even factor of 8 
+        sz = size(data_pre);
+        rows_to_keep = 1:floor(sz(1)/8)*8;
+        cols_to_keep = 1:floor(sz(2)/8)*8;
+        data_pre = data_pre(rows_to_keep, cols_to_keep);
 
         % ---- Optional Windowing ----
         if applyWindow
@@ -1371,6 +1386,9 @@ function createVideoFromFrames(fNames, fTimes, dataDir, varName, ...
         end
 
         % ---- Prepare Frame for Video ----
+        % Flip sign if IR 
+        data_pre(strcmp(instrument, 'IR'), :) = -data_pre(strcmp(instrument, 'IR'), :);
+
         % Normalize frame to [0, 1] for consistent visualization
         minVal = min(data_pre(:));
         maxVal = max(data_pre(:));
@@ -1383,6 +1401,7 @@ function createVideoFromFrames(fNames, fTimes, dataDir, varName, ...
         % Convert to uint8 [0, 255] and then to RGB
         frame_uint8 = uint8(frame_norm * 255);
         frame_rgb = cat(3, frame_uint8, frame_uint8, frame_uint8); % Make grayscale RGB
+        % figure; imagesc(frame_rgb);
 
         % ---- Write Frame to Video ----
         try
@@ -1401,10 +1420,6 @@ function createVideoFromFrames(fNames, fTimes, dataDir, varName, ...
         fprintf('Error closing VideoWriter: %s\n', closeME.message);
     end
 end
-
-%==========================================================================
-
-%==========================================================================
 
 function results = extractWaveletFeatures(dataType, spec_full, data_background, squares, ...
     Scales, Angles, frameDateStr, ...
@@ -1627,6 +1642,11 @@ function data_preprocessed = preprocessFrame(data, dataType, methodName, fullPat
             % (3) Fill masked region with a chosen percentile value
             fill_value = prctile(data_preprocessed(:), IR_fillPercentile);
             data_preprocessed(nan_mask') = fill_value;
+
+            % (4) Process by methodName again (bandpass)
+            %data_preprocessed = processDataMethod(data, methodName, ...
+            %    clipMinHP, clipMaxHP, ...
+            %    lpWidth20, lpWidth50, lpWidth100);
 
         case 'VIS'
             % (1) VIS-specific threshold or dynamic range
