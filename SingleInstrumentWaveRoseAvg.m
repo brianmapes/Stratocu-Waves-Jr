@@ -10,8 +10,11 @@
 
 %% 1) VARIABLES SETUP
 %----------- DATE/TIME SETTINGS ---------------------------
-startDate = datetime(2023, 10, 12, 1, 0, 0); % start processing time
-endDate   = datetime(2023, 10, 12, 3, 30, 0); % end processing time
+%startDate = datetime(2023, 10, 12, 1, 0, 0); % start processing time
+%endDate   = datetime(2023, 10, 12, 3, 30, 0); % end processing time
+startDate = datetime(2023, 10, 11, 14, 0, 0); % start processing time
+endDate = datetime(2023, 10, 11, 20, 30, 0); % end processing time
+
 
 %----------- FOLDER/PATH SETTINGS ---------------------------
 rootSepacDir = 'C:\Users\admin\Box\GWaves_2023_10_11-14_SEPAC';
@@ -58,7 +61,7 @@ IR_fillPercentile = 50;     % Fill IR masked pixels with this percentile
 VIS_lowerPercentile = 10;   % VIS lower bound (percentile)
 VIS_upperPercentile = 99;   % VIS upper bound (percentile)
 VIS_fillPercentile = 50;    % Fill VIS NaN pixels with this percentile
-Insolation_Correction = false; % activate the insolation grid calculation and correction
+Insolation_Correction = true; % activate the insolation grid calculation and correction
 
 %----------- HIGH-PASS FILTER SETTINGS ----------------------
 clipMinHP = -3;             % Minimum value to clip after highpass filtering
@@ -81,8 +84,8 @@ end
 nAngles_fineFactor  = 4;            % Factor to refine angular resolution in the rose plot
 nScales_fineFactor  = 4;            % Factor to refine scale resolution in the rose plot
 peakDetectionFactor = 1;            % Threshold factor (mean + factor*std) for peak detection
-contourArray        = [95 97 99];    % [Used as either percentiles or absolute values for contouring]
-ArrayMode           = 'percentile'; % 'percentile' or 'absolute'
+%contourArray        = [95 97 99];    % [Used as either percentiles or absolute values for contouring]
+%ArrayMode           = 'percentile'; % 'percentile' or 'absolute'
 
 %----------- IMAGE ANNOTATIONS & OUTPUT ---------------------
 saverose = true;            % Flag to save the wave–rose image
@@ -103,10 +106,20 @@ beta = 0.8;         % Weight for smoothing toward baseline trend
 decayFactor = 0.55;  % Amplitude decay applied to baseline smoothing
 decaySharpness = 1.2;  % Controls how sharply the baseline trend decays with scale
 upperCutoff = 16;  % Upper trusted scale
-nyquistScales= Scales_orig(1:2); % Scales that are likely to be hit by nyquist issue
+%nyquistScales= Scales_orig(1:2); % Scales that are likely to be hit by nyquist issue
+nyquistScales= Scales_orig(:,Scales_orig<=8); % Scales that are likely to be hit by nyquist issue
 
 matrixMode = true;
-calibrationMatrix = [0.5;0.5;0.5;0.4;0.335;0.17;0.083]; % Empirical calibration values
+%calibrationMatrix = [0.5;0.5;0.5;0.4;0.335;0.17;0.083]; % Empirical calibration values
+calibrationMatrix = [
+     2,   0.50;
+     4,   0.50;
+     8,   0.50;
+    16,   0.40;
+    32,   0.335;
+    64,   0.17;
+   128,   0.083;
+];
 
 %----------- SYNTHETIC DATA SETTINGS ----------------------
 syntheticWaveMode = true;   % If true, superimpose a synthetic wave on a fixed base image
@@ -114,7 +127,7 @@ driftMode         = true;   % If true, apply a drift shift each frame using circ
 
 % Drift parameters (in m/s) rather than pixels/frame:
 drift_speed_m_s = 15;       % e.g. 10 m/s
-driftAngleDeg   = 45+90+90;       % e.g. 45 degrees (0 = right, 90 = up) // the image is inverted !!
+driftAngleDeg   = 45+90;       % e.g. 45 degrees (0 = right, 90 = up) // the image is inverted !!
 
 
 % Parameters for the synthetic wave:
@@ -151,8 +164,24 @@ time_resolution = 1800;
 %----------- VIDEO OUTPUT SETTINGS -----------------------
 createOutputVideo = true;    % Set to true to generate a video of processed frames
 videoFrameRate = 5;          % Frames per second for the output video
-videoApplyShrink = true;     % Use true to apply shrinkfactor to video frames
+videoApplyShrink = false;     % Use true to apply shrinkfactor to video frames
 videoApplyWindow = true;     % Use true to apply windowing to video frames
+
+%----------- PEAK-DETECTION/Brightness decay SETTINGS -----------------------------------
+speed_min_threshold   = 7.5;        % [m s-1] absolute floor
+speed_std_factor      = 2;         % N·σ above local mean
+maxPeaksPerROI        = 3;         % safety cap (set [] for unlimited)
+clevfactor_real       = 1.5;       % divides contour levels (real)
+clevfactor_imag       = 2;         % divides contour levels (imag)
+contourOption       = 'percentile';           % 'percentile' | '3sigma'
+contourArray        = [50 60 70];             % if 'percentile'
+
+radStep_pixels      = 2;       % width of annuli (original-res pixels)
+radMax_pixels       = 120;     % stop radius for B-decay
+
+showQuicklooks      = true;    % one figure/ROI with masks & B(r)
+saveQuicklooks      = true;   % if you want files instead of onscreen
+%-----------------------------------------------------------------------
 
 %% 2) RETRIEVE FILE LIST
 % Raw data is assumed to be in:
@@ -196,7 +225,16 @@ if createOutputVideo && numFrames > 0 % Check if video creation is enabled and f
                        VIS_lowerPercentile, VIS_upperPercentile, ...
                        VIS_fillPercentile, clipMinHP, clipMaxHP, ...
                        lowPassFilterWidth_20, lowPassFilterWidth_50, lowPassFilterWidth_100, ...
-                       Insolation_Correction);
+                       Insolation_Correction, ...
+                       syntheticWaveMode, ...
+                       driftMode, ...
+                       time_resolution, ...
+                       drift_speed_m_s, driftAngleDeg, ...
+                       cphase, wavelength, direction, zamplitude, ...
+                       PBLdepth, dB_dzPBL, ...
+                       packet_center_x, packet_center_y, ...
+                       packet_width_x, packet_width_y, ...
+                       DXFactor);
 
 elseif createOutputVideo
     fprintf('\nVideo creation skipped: No frames were processed.\n');
@@ -263,13 +301,18 @@ for f_idx = 1:numFrames
 
     % ---- Synthetic wave injection (if enabled) ----
     if syntheticWaveMode
-        % Compute wave parameters
-        k = (2 * pi / wavelength) * cosd(direction);
-        l = (2 * pi / wavelength) * sind(direction);
-        omega = cphase * (2 * pi / wavelength);
+
+        % --- meteo → math angle conversion (0° = Est, trigonometrical direction) ---
+        theta = deg2rad(90 - direction);    % direction given in meteorological convention
         
+        % --- wave vector ---
+        k = (2*pi / wavelength) * cos(theta);   % kx
+        l = (2*pi / wavelength) * sin(theta);   % ky  (kept for phase)
+        omega = cphase * (2 * pi / wavelength);
+
         % Time for current frame
         t = (f_idx - 1) * time_resolution;  % e.g. in seconds
+
         
         % Evolving phase
         phase = k * Xm + l * Ym - omega * t;
@@ -282,10 +325,12 @@ for f_idx = 1:numFrames
                         + ((Ym - packet_center_y) / packet_width_y).^2) );
         dz = dz .* Ampwindow;
 
-        % Optionally, compute horizontal displacements:
-        dxy = (zamplitude / PBLdepth) * wavelength * sin(phase - pi/2) / DX;
-        dx = dxy .* cosd(direction) .* Ampwindow;
-        dy = dxy .* sind(direction) .* Ampwindow;
+
+        % --- horizontal displacement associayted to w' ---
+        dxy = (zamplitude / PBLdepth) * wavelength .* ...
+               sin(phase - pi/2) ./ DX;          % scalar amplitude in px
+        dx  = dxy .* cos(theta).* Ampwindow;                 % composante O-E  (columns)
+        dy  = dxy .* sin(theta).* Ampwindow;                 % composante S-N  (lines)
         
         % Create new coordinates for interpolation:
         XI = X - dx;
@@ -623,6 +668,508 @@ end
 
 fprintf('\nAll done. Single–frame and cross–temporal wavelet (coherence) computations complete.\n');
 
+%% 6) PEAK-OVERLAY – draw real & imaginary contours of gravity-wave peaks
+% ----------BEFORE STARTUP, BUILD ONE ANNOTATION CUBE FOR THE WHOLE FRAME ----------
+Ny = size(data_bg_pre,1);   % full-res dims (after any resize/window)
+Nx = size(data_bg_pre,2);
+
+crestMask2D  = false(Ny, Nx); % 1 = crest
+troughMask2D = false(Ny, Nx); % 1 = trough
+realSum2D     = zeros (Ny, Nx, 'single'); % signed Σ(real(coeff_full))
+
+spec_vis = spec_full;          % size = Ny × Nx × NSCALES × NANGLES
+
+% Make an empty RGB image that we can draw on
+figPeak = figure('visible','on');
+imagesc(imresize(data_bg_pre, invshrinkfactor)); axis image off; colormap(gray); hold on;
+
+% Loop over ROIs
+for iROI = 1:numSquares
+    % Convenience aliases
+    speedMat = roiSpeedCell_corrected{iROI};          % [NSCALES × NANGLES]
+    % For each row (corresponding to a fine-scale value), multiply by that scale.
+    for iRow = 1:size(speedMat,1)
+         speedMat(iRow, :) = (pixel_size_km*1000*(speedMat(iRow, :)/(2*pi)) .* Scales(iRow)* pi/sqrt(2))/(1800*shrinkfactor);
+    end
+    xR       = squares(iROI).x_range;
+    yR       = squares(iROI).y_range;
+
+    % Build a logical mask of peak candidates --------------------------
+    mu   = mean(speedMat(:),'omitnan');
+    sigma= std( speedMat(:),'omitnan');
+    thr  = max(speed_min_threshold, mu + speed_std_factor*sigma);
+    
+    speedVals = abs(speedMat);
+
+    visited   = false(size(speedVals));
+    
+    % we will collect blobs in a struct array
+    blobList  = struct('members',{},'maxAmp',{});   
+
+    while true
+        % 1) find the strongest un-visited seed -----------------------------
+        speedVals(visited) = -inf;                        % mask out visited
+        [peakAmp, linearIdx] = max(speedVals(:));
+        if peakAmp < thr, break, end                    % nothing above threshold
+    
+        [sSeed,aSeed] = ind2sub(size(speedVals), linearIdx);
+    
+        % 2) flood-fill ------------------------------------------------------
+        thisBlob  = [];               % list of (s,a)
+        queue     = [sSeed, aSeed];
+    
+        while ~isempty(queue)
+            s = queue(1,1);  a = queue(1,2);
+            queue(1,:) = [];                         % pop
+            if visited(s,a), continue, end
+            visited(s,a) = true;                     % mark now
+    
+            if abs(speedMat(s,a)) < thr, continue, end
+    
+            thisBlob(end+1,:) = [s,a];               %#ok<AGROW>
+    
+            % enqueue 8-neighbours with angle wrap
+            for ds = -1:1
+                for da = -1:1
+                    if ds==0 && da==0, continue, end
+                    ss = s + ds;
+                    aa = mod(a - 1 + da, NANGLES) + 1;
+                    if ss>=1 && ss<=NSCALES && ~visited(ss,aa)
+                        queue(end+1,:) = [ss, aa];    %#ok<AGROW>
+                    end
+                end
+            end
+        end
+    
+        % 3) aggregate complex coefficients over this blob ------------------
+        wav_c_blob = zeros(round(Ny/shrinkfactor), round(Nx/shrinkfactor), 'like', spec_vis(:,:,1,1));
+        for jj = 1:size(thisBlob,1)
+            sIdx = thisBlob(jj,1);   aIdx = thisBlob(jj,2);
+            wav_c_blob = wav_c_blob + spec_vis(:,:,sIdx,aIdx);
+        end
+        wav_real = real(wav_c_blob);
+        wav_imag = imag(wav_c_blob);
+
+        % Optionally restrict the display to the current ROI only ----
+        mask = false(size(wav_real));
+        mask(yR, xR) = true;
+        wav_real(~mask) = NaN;
+        wav_imag(~mask) = NaN;
+
+        % Choose contour levels based on either absolute values or percentiles.
+        switch lower(contourOption)
+            case 'percentile'
+                contourLevels = prctile(abs(wav_real(:)), contourArray);
+                % Plot contours:
+                % For positive values:
+                contour(wav_real, contourLevels, 'LineColor', 'r', 'LineWidth', 0.5);
+                % For negative values (mirror the levels):
+                contour(wav_real, -contourLevels, 'LineColor', 'b', 'LineWidth', 0.5);
+            case '3sigma'
+                % Robust contour levels based on local std --------------------
+                sig_r = std(wav_real(:),'omitnan');
+                sig_i = std(wav_imag(:),'omitnan');
+        
+                posLevels =  (sig_r/clevfactor_real) : (sig_r/clevfactor_real) :  3*sig_r;
+                negLevels = -(sig_r/clevfactor_real) :-(sig_r/clevfactor_real) : -3*sig_r;
+                imagLevels=  (sig_i/clevfactor_imag) : (sig_i/clevfactor_imag) :  3*sig_i;
+        
+                %Plot: red = +real, blue = –real, green dashed = |imag| ------
+                contour(wav_real, posLevels, 'LineColor','red',  'LineWidth',0.7);
+                contour(wav_real, negLevels, 'LineColor','blue', 'LineWidth',0.7);
+                %contour(wav_imag, imagLevels,'LineColor',[0 0.6 0], ...
+                %                               'LineStyle','--','LineWidth',0.7);
+
+            otherwise
+                error('Unknown contour option. Choose either "3sigma" or "percentile".');
+        end
+
+        %=====  up-sample to full resolution  ======================
+        if shrinkfactor ~= 1
+            coeff_full  = imresize(wav_c_blob,   shrinkfactor, 'bilinear');  % complex
+            mask_full   = imresize(mask,    shrinkfactor, 'nearest')>0;
+            coeff_full = coeff_full(1:end-1,:);
+            mask_full = mask_full(1:end-1,:);
+        else
+            coeff_full  = wav_c_blob;   % already full-res
+            mask_full   = mask;
+        end
+        
+        % Recaculate the level like above
+        switch lower(contourOption)
+          case 'percentile'
+            lev = prctile(abs(real(coeff_full(mask_full))), contourArray(1));
+          case '3sigma'
+            lev = std(real(coeff_full(mask_full)), 'omitnan');
+        end
+        
+        % create the two 2D masks
+        crest  = ( real(coeff_full) >=  lev ) & mask_full;
+        trough = ( real(coeff_full) <= -lev ) & mask_full;
+        
+        % Merges with the global masks
+        crestMask2D  = crestMask2D  | crest;
+        troughMask2D = troughMask2D | trough;
+        realSum2D     = realSum2D  +  single(real(coeff_full) .* mask_full);                   
+       
+        % optional: keep a list of blobs for later ranking
+        blobList(end+1).members = thisBlob;            %#ok<AGROW>
+        blobList(end).maxAmp   = peakAmp;
+    end
+
+    % Draw ROI rectangle so the user knows which square is which -------
+    rectangle('Position',[xR(1), yR(1), ...
+               numel(xR), numel(yR)], ...
+               'EdgeColor','k','LineWidth',0.8);
+end
+
+% Final cosmetics & export ---------------------------------------------
+title(sprintf('Peak wavelet contours – %s', datestr(thisTime)), ...
+      'Color','w','FontWeight','bold');
+
+peakFileName = fullfile(singleOutDir, sprintf('Peaks_%s.png', ...
+                     datestr(thisTime,'yyyymmdd_HHMMSS')));
+exportgraphics(figPeak, peakFileName, 'Resolution', 300);
+close(figPeak);
+
+fprintf('Saved peak-overlay to: %s\n', peakFileName);
+
+% --- NetCDF export --------------------------------
+fname = sprintf('%s_spectralpeaks_%s_to_%s.nc', ...
+                upper(instrument), ...
+                datestr(startDate,'yyyymmddHHMM'), ...
+                datestr(endDate,  'yyyymmddHHMM'));
+outNC = fullfile(singleOutDir, fname);
+
+if exist(outNC,'file'), delete(outNC); end
+
+nccreate(outNC,'REAL_SUM', 'Datatype','single', ...
+                     'Dimensions',{'y',Ny,'x',Nx});
+ncwrite (outNC,'REAL_SUM', single(realSum2D));
+
+ncwriteatt(outNC,'/','instrument' ,instrument);
+
+ncwriteatt(outNC,'/','time_coverage_start', char(startDate));
+ncwriteatt(outNC,'/','time_coverage_end',   char(endDate));
+
+ncwriteatt(outNC,'/','n_scales', int32(NSCALES));
+ncwriteatt(outNC,'/','n_angles', int32(NANGLES));
+
+ncwriteatt(outNC,'/','description', ...
+   'Accumulated real part of selected CWT peaks');
+fprintf('   ↳ wrote REAL_SUM → %s\n', outNC);
+
+
+
+%% 6.1) BRIGHTNESS–DECAY ANALYSIS  ________________________________________
+%
+%  • detects each spectral blob (flood-fill in scale/angle space)
+%  • builds a ridge (skeleton) along the positive real-part lobe
+%  • chooses an anchor pixel (brightest on ridge) – for thumbnails only
+%  • computes B(r) = ⟨ΔT⟩(r) as a function of distance to the whole ridge
+%  • stacks all B(r) profiles → composite curve
+%  • optional: postage-stamp stack around every anchor
+%  ________________________________________________________________________
+
+
+spec_vis   = spec_full;                     % Ny×Nx×NSCALES×NANGLES
+data_full  = data_bg_pre;                   % full-res, pre-processed
+[Ny_full, Nx_full] = size(data_full);
+
+% radial bins for B(r)
+radBins   = (0:radStep_pixels:radMax_pixels).';     % column vector
+nBins     = numel(radBins) - 1;
+Bstack    = [];                                     % Npeaks × nBins
+
+% options for § 6.2
+doPostageStamp   = true;
+doAzimAvg        = true;
+stampHalfSize_px = radMax_pixels;
+saveStampNetCDF  = true;
+
+StackStamp  = [];          % (2H+1)×(2H+1)×N
+StampCtrXY  = [];          % N×2 (cx,cy)
+StampRadProf= [];          % N×nBins
+
+NSCALES  = numel(Scales);
+NANGLES  = numel(Angles);
+
+% -------------------------------------------------------------------------
+%                           LOOP OVER ROIs
+% -------------------------------------------------------------------------
+for iROI = 1:numSquares
+
+    % ---------- A) speed matrix and threshold ---------------------------
+    speedMat = roiSpeedCell_corrected{iROI};
+    for iRow = 1:size(speedMat,1)
+        speedMat(iRow,:) = ...
+            (pixel_size_km*1000*(speedMat(iRow,:)/(2*pi)) .* ...
+             Scales(iRow) * pi/sqrt(2)) / (1800*shrinkfactor);
+    end
+
+    xR_sh = squares(iROI).x_range;
+    yR_sh = squares(iROI).y_range;
+
+    mu  = mean(speedMat(:),'omitnan');
+    sg  = std (speedMat(:),'omitnan');
+    thr = max(speed_min_threshold, mu + speed_std_factor*sg);
+
+    speedAbs = abs(speedMat);
+    visited  = false(size(speedAbs));
+
+    % ROI indices in full resolution
+    xR_full = ((xR_sh-1)*shrinkfactor)+1 : (xR_sh(end)*shrinkfactor);
+    yR_full = ((yR_sh-1)*shrinkfactor)+1 : (yR_sh(end)*shrinkfactor);
+
+    % ---------------------------------------------------------------------
+    %                     LOOP OVER BLOBS  (one blob = one crest)
+    % ---------------------------------------------------------------------
+    while true
+        speedAbs(visited) = -inf;
+        [peakAmp, linIdx] = max(speedAbs(:));
+        if peakAmp < thr, break, end
+
+        % ---------- quick-look canvas ---------------------------------------
+        if showQuicklooks
+            figQL = figure('Name',sprintf('ROI %d',iROI), ...
+                           'Units','normalized','Position',[.05 .05 .35 .6]);
+            subplot(2,2,1);
+            imagesc(imresize(data_full,invshrinkfactor));
+            axis image off; colormap gray; hold on
+            rectangle('Position',[xR_sh(1) yR_sh(1) ...
+                                  numel(xR_sh) numel(yR_sh)], ...
+                      'EdgeColor','c','LineWidth',1.5);
+            title(sprintf('ROI %d context',iROI));
+        end
+
+        [sSeed,aSeed] = ind2sub(size(speedAbs), linIdx);
+
+        % --- flood-fill in (scale,angle) space --------------------------
+        thisBlob = [];                        % list of (s,a)
+        queue    = [sSeed, aSeed];
+        while ~isempty(queue)
+            s = queue(1,1); a = queue(1,2); queue(1,:) = [];
+            if visited(s,a), continue, end
+            visited(s,a) = true;
+            if abs(speedMat(s,a)) < thr, continue, end
+
+            thisBlob(end+1,:) = [s,a];                  %#ok<AGROW>
+
+            for ds = -1:1
+                for da = -1:1
+                    if ds==0 && da==0, continue, end
+                    ss = s + ds;
+                    aa = mod(a - 1 + da, NANGLES) + 1;
+                    if ss>=1 && ss<=NSCALES && ~visited(ss,aa)
+                        queue(end+1,:) = [ss, aa];      %#ok<AGROW>
+                    end
+                end
+            end
+        end
+
+        % --- aggregate complex coefficients over the blob --------------
+        wav_c_blob = zeros(size(spec_vis(:,:,1,1)),'like',spec_vis);
+        for jj = 1:size(thisBlob,1)
+            wav_c_blob = wav_c_blob + ...
+                         spec_vis(:,:, thisBlob(jj,1), thisBlob(jj,2));
+        end
+        wav_r = real(wav_c_blob);
+
+        % restrict to current ROI
+        maskROI = false(size(wav_r));
+        maskROI(yR_sh,xR_sh) = true;
+        wav_r(~maskROI) = NaN;
+
+        % positive-lobe threshold in spatial domain
+        switch lower(contourOption)
+            case 'percentile'
+                posLevel = prctile(abs(wav_r(:)), contourArray(1));
+            case '3sigma'
+                posLevel = std(wav_r(:),'omitnan');
+            otherwise
+                error('Unknown contour option');
+        end
+        maskRed = wav_r >= posLevel;
+        maskRed(~maskROI) = false;
+
+        % keep largest spatial blob
+        CCred = bwconncomp(maskRed,4);
+        if CCred.NumObjects==0, continue, end
+        [~,bigI] = max(cellfun(@numel,CCred.PixelIdxList));
+        maskRed  = false(size(maskRed));
+        maskRed(CCred.PixelIdxList{bigI}) = true;
+
+        % --- ridge (skeleton) extraction --------------------------------
+        ridgeMask = bwskel(maskRed);
+        if ~any(ridgeMask(:)), continue, end
+        [ySkel,xSkel] = find(ridgeMask);
+
+        % map ridge to full resolution
+        ridgeMask_full = false(Ny_full,Nx_full);
+        row_full = min(max(round(ySkel*shrinkfactor),1),Ny_full);
+        col_full = min(max(round(xSkel*shrinkfactor),1),Nx_full);
+        ridgeMask_full(sub2ind([Ny_full Nx_full],row_full,col_full)) = true;
+
+        % anchor = ridge pixel with max ΔT
+        subROI_full = data_full(yR_full,xR_full);
+        baselineROI = mean(subROI_full(:),'omitnan');
+        deltaT_full = data_full - baselineROI;
+        deltaT_on_ridge = deltaT_full(ridgeMask_full);
+        [~,bestIdx] = max(deltaT_on_ridge);
+        cx = col_full(bestIdx);   cy = row_full(bestIdx);
+
+
+        % --- ridge-centred brightness-decay profile ---------------------
+        Rmap = bwdist(ridgeMask_full);          % distance [px] to *entire* ridge
+        
+        prof = nan(1,nBins);
+        for jj = 1:nBins
+            annulus = Rmap>=radBins(jj) & Rmap<radBins(jj+1);
+            if any(annulus(:))
+                prof(jj) = mean(deltaT_full(annulus),'omitnan');
+            end
+        end
+        if all(isnan(prof)), continue, end      % <-- keep guard
+        Bstack = [Bstack; prof];                %#ok<AGROW>
+
+
+        % --- optional postage-stamp ------------------------------------
+        if doPostageStamp
+            H = stampHalfSize_px;  S = 2*H+1;
+            rowL = max(cy-H,1); rowR = min(cy+H,Ny_full);
+            colL = max(cx-H,1); colR = min(cx+H,Nx_full);
+
+            stampSq  = NaN(S,S,'like',deltaT_full);
+            rowDst   = 1 + (rowL-(cy-H));
+            colDst   = 1 + (colL-(cx-H));
+            stampSq(rowDst:rowDst+(rowR-rowL), ...
+                    colDst:colDst+(colR-colL)) = ...
+                    deltaT_full(rowL:rowR,colL:colR);
+
+            StackStamp(:,:,end+1) = stampSq;            %#ok<AGROW>
+            StampCtrXY(end+1,:)   = [cx cy];            %#ok<AGROW>
+
+            if doAzimAvg
+                prof_stamp = azimProfile(stampSq,H+1,H+1,radBins);
+                if all(isnan(prof_stamp)),  continue,  end    % <-- guard
+                StampRadProf = [StampRadProf; prof_stamp]; %#ok<AGROW>
+            end
+        end
+
+        % --- quick-look panels -----------------------------------------
+        if showQuicklooks
+            subplot(2,2,2); hold on
+            axis ij; 
+            imagesc(imresize(data_full,invshrinkfactor)); axis image off
+            contour(wav_r,[posLevel posLevel],'r','LineWidth',.7);
+            [pY,pX] = find(ridgeMask);
+            plot(pX,pY,'r.', 'MarkerSize',4);
+            xlim([xR_sh(1) xR_sh(end)]);
+            ylim([yR_sh(1) yR_sh(end)]);
+            title('CWT real + ridge');
+
+            subplot(2,2,3);
+            imagesc(data_full); axis image off; colormap gray
+            xlim([xR_full(1) xR_full(end)]);
+            ylim([yR_full(1) yR_full(end)]);
+            title('Full-res & anchor');
+
+            subplot(2,2,4);
+            rPlot = (radBins(1:end-1)+radBins(2:end))/2;
+            plot(rPlot,prof,'-o'); grid on
+            xlabel('r [px]'); ylabel('\DeltaT');
+            title('Brightness-decay');
+        end
+
+        % save or show quick-look
+        if showQuicklooks
+            if saveQuicklooks
+                qlName = fullfile(singleOutDir, ...
+                         sprintf('ROI%02d_quicklook_%s.png', iROI, ...
+                         datestr(thisTime,'yyyymmdd_HHMMSS')));
+                exportgraphics(figQL, qlName, 'Resolution',250);
+                close(figQL)
+            else
+                drawnow
+            end
+        end
+
+    end % while blobs
+
+end % iROI
+
+% ---------- 6.1.1) COMPOSITE BRIGHTNESS-DECAY ---------------------------
+if ~isempty(Bstack)
+    Bcomp = nanmean(Bstack,1);
+    figure('Name','Composite brightness-decay', ...
+           'Units','normalized','Position',[.45 .3 .25 .4]);
+    rPlot = (radBins(1:end-1)+radBins(2:end))/2;
+    plot(rPlot,Bcomp,'LineWidth',2); grid on
+    xlabel('Radius r [original pixels]');
+    ylabel('\langle\DeltaT\rangle');
+    title(sprintf('Composite B-decay over %d lobes', size(Bstack,1)));
+end
+
+
+%% 6.2  POSTAGE-STAMP STACKING ________________________
+
+if doPostageStamp && ~isempty(StackStamp)
+    H = stampHalfSize_px;        % shorthand
+    N = size(StackStamp,3);
+
+    StampMean = nanmean(StackStamp,3);
+    StampStd  =  nanstd(StackStamp,0,3);
+
+    % -- quick-look --
+    figure('Name','Postage-stamp composite')
+    subplot(1,2,1); imagesc(StampMean); axis image off
+    title(sprintf('\\DeltaT mean of %d stamps',N));
+    colormap(parula)
+    subplot(1,2,2); imagesc(StampStd); axis image off
+    title(sprintf('\\DeltaT std-dev'));
+    drawnow
+
+    % -- optional composite radial profile (B2) --
+    if doAzimAvg && ~isempty(StampRadProf)
+        figure('Name','Composite B(r) from stamps')
+        rPlot = (radBins(1:end-1)+radBins(2:end))/2;
+        plot(rPlot, nanmean(StampRadProf,1),'LineWidth',2); grid on
+        xlabel('r [px]'); ylabel('\langle\DeltaT\rangle');
+        title(sprintf('Mean of %d stamps',N));
+    end
+
+    % -- NetCDF export ------------------------------------------
+    if saveStampNetCDF
+        fname = sprintf('%s_brightsnaps_%s_to_%s.nc', ...
+                        upper(instrument), ...
+                        datestr(startDate,'yyyymmddHHMM'), ...
+                        datestr(endDate,  'yyyymmddHHMM'));
+        outNC = fullfile(singleOutDir, fname);
+        if exist(outNC,'file'); delete(outNC); end
+
+        nccreate(outNC,'STAMP_MEAN','Datatype','single', ...
+                           'Dimensions',{'y',2*H+1,'x',2*H+1});
+        ncwrite (outNC,'STAMP_MEAN',single(StampMean));
+
+        nccreate(outNC,'STAMP_STD', 'Datatype','single', ...
+                           'Dimensions',{'y',2*H+1,'x',2*H+1});
+        ncwrite (outNC,'STAMP_STD', single(StampStd));
+
+        % optional – save the stack itself (big!)
+        % nccreate(outNC,'STAMP_STACK','Datatype','single', ...
+        %     'Dimensions',{'y',2*H+1,'x',2*H+1,'k',N});
+        % ncwrite (outNC,'STAMP_STACK',single(StackStamp));
+
+        ncwriteatt(outNC,'/','description', ...
+            'Postage-stamp stack around Brightness Points - mean & std');
+
+        ncwriteatt(outNC,'/','time_coverage_start', char(startDate));
+        ncwriteatt(outNC,'/','time_coverage_end',   char(endDate));
+        
+        ncwriteatt(outNC,'/','n_stamps',int32(N));
+        fprintf('   ↳ wrote POSTAGE-STAMP composites → %s\n',outNC);
+    end
+end
 
 %% HELPER FUNCTIONS
 %==========================================================================
@@ -1254,13 +1801,30 @@ for iR = 1:nROI
     %%
     if any(trustedMask)
         % Calculate baseline trend with scale-dependent decay
-        if matrixMode 
+        if matrixMode
+            baseline = zeros(nScales, nAngles);
+            % Retrieve the 'calibrationMatrix' from base workspace
             Matrix = evalin('base','calibrationMatrix'); 
-            baseline = mean(correctedWave(trustedMask,:), 1).*Matrix(1:width(Scales)) ;         
-        else
-            baseline = mean(correctedWave(trustedMask,:), 1).* exp(-decaySharpness*Scales'/max(Scales))*decayFactor;
-        end
+
+            for s = 1:nScales
+                thisScale = Scales(s);
         
+                % Interpolate factor from the user-provided table
+                factor = interp1( ...
+                    Matrix (:,1), ...  % known scale values
+                    Matrix (:,2), ...  % known factors
+                    thisScale,           ...    % the scale we have
+                    'linear', 'extrap' );
+        
+                baseline(s,:) = mean(correctedWave(trustedMask,:), 1, 'omitnan') * factor;
+            end
+
+        else
+            % Use an exponential factor
+            baseline = mean(correctedWave(trustedMask,:), 1, 'omitnan') ...
+                       .* exp(-decaySharpness * (Scales'/max(Scales))) * decayFactor;
+        end
+
     else
         baseline = zeros(nScales, 1);
     end
@@ -1273,131 +1837,6 @@ for iR = 1:nROI
     roiSpeedCell_final{iR} = correctedWave;
 end
 end
-
-%==========================================================================
-
-%% HELPER FUNCTION - VIDEO CREATION
-%==========================================================================
-function createVideoFromFrames(fNames, fTimes, dataDir, varName, ...
-                               outputVideoFile, frameRate, ...
-                               applyShrink, shrinkfactor, invshrinkfactor, ...
-                               applyWindow, windowType, radius_factor, decay_rate, ...
-                               instrument, methodName, ...
-                               IR_threshold, IR_fillPercentile, ...
-                               VIS_lowerPercentile, VIS_upperPercentile, ...
-                               VIS_fillPercentile, clipMinHP, clipMaxHP, ...
-                               lpWidth20, lpWidth50, lpWidth100, ...
-                               Insolation_Correction)
-%CREATEVIDEOFROMFRAMES Creates a video from a sequence of preprocessed frames.
-%
-%   Inputs:
-%       fNames, fTimes, dataDir, varName: File information.
-%       outputVideoFile: Full path for the output MP4 video file.
-%       frameRate: Desired frame rate for the video.
-%       applyShrink: Boolean, true to apply resizing based on shrinkfactor.
-%       shrinkfactor, invshrinkfactor: Resizing factors.
-%       applyWindow: Boolean, true to apply windowing.
-%       windowType, radius_factor, decay_rate: Windowing parameters.
-%       instrument, methodName, ... : All preprocessing parameters matching the main script.
-%
-%   Note: This function re-reads and re-processes frames. For videos showing
-%         synthetic waves or drift, video creation might need to be integrated
-%         *within* the main loop to capture the exact frame modifications.
-
-    numFrames = numel(fNames);
-    if numFrames == 0
-        fprintf('No frames provided to create video.\n');
-        return;
-    end
-
-    fprintf('Creating video: %s\n', outputVideoFile);
-
-    % --- Initialize Video Writer ---
-    try
-        writerObj = VideoWriter(outputVideoFile, 'MPEG-4'); % Using MPEG-4 for compatibility
-        writerObj.FrameRate = frameRate;
-        open(writerObj);
-    catch ME
-        fprintf('Error initializing VideoWriter: %s\n', ME.message);
-        fprintf('Video creation failed.\n');
-        return;
-    end
-
-    % --- Loop through frames ---
-    for f_idx = 1:numFrames
-        thisFileName = fNames{f_idx};
-        thisFullPath = fullfile(dataDir, thisFileName);
-        thisTime = fTimes(f_idx);
-        fprintf('  Adding frame %d/%d: %s\n', f_idx, numFrames, thisFileName);
-
-        % ---- Read the raw data ----
-        try
-            data = double(ncread(thisFullPath, varName));
-        catch readME
-            fprintf('  Warning: Could not read frame %s. Skipping. Error: %s\n', thisFileName, readME.message);
-            continue; % Skip to next frame
-        end
-
-        % ---- Preprocessing (Identical to main loop) ----
-        % NOTE: If syntheticWaveMode or driftMode was true in the main script,
-        % this video frame *won't* include those effects unless you add
-        % that logic here as well (which would require passing many more parameters).
-        data_pre = preprocessFrame(data, instrument, methodName, ...
-                    thisFullPath, thisTime, ...
-                    IR_threshold, IR_fillPercentile, ...
-                    VIS_lowerPercentile, VIS_upperPercentile, ...
-                    VIS_fillPercentile, clipMinHP, clipMaxHP, ...
-                    lpWidth20, lpWidth50, lpWidth100, ...
-                    Insolation_Correction);
-
-        % ---- Optional Resize ----
-        if applyShrink && shrinkfactor ~= 1
-            data_pre = imresize(data_pre, invshrinkfactor);
-        end
-
-        % ---- Optional Windowing ----
-        if applyWindow
-            switch lower(windowType)
-                case 'radial'
-                    data_pre = applyRadialWindow(data_pre, radius_factor, decay_rate);
-                case 'rectangular'
-                    data_pre = applyRectangularWindow(data_pre, radius_factor, decay_rate);
-            end
-        end
-
-        % ---- Prepare Frame for Video ----
-        % Normalize frame to [0, 1] for consistent visualization
-        minVal = min(data_pre(:));
-        maxVal = max(data_pre(:));
-        if maxVal > minVal
-            frame_norm = (data_pre - minVal) / (maxVal - minVal);
-        else
-            frame_norm = zeros(size(data_pre), 'like', data_pre); % Handle constant frame
-        end
-
-        % Convert to uint8 [0, 255] and then to RGB
-        frame_uint8 = uint8(frame_norm * 255);
-        frame_rgb = cat(3, frame_uint8, frame_uint8, frame_uint8); % Make grayscale RGB
-
-        % ---- Write Frame to Video ----
-        try
-            writeVideo(writerObj, frame_rgb);
-        catch writeME
-            fprintf('  Warning: Could not write frame %d. Skipping. Error: %s\n', f_idx, writeME.message);
-            % Consider closing the video writer if errors persist
-        end
-    end
-
-    % --- Finalize Video ---
-    try
-        close(writerObj);
-        fprintf('Video creation complete: %s\n', outputVideoFile);
-    catch closeME
-        fprintf('Error closing VideoWriter: %s\n', closeME.message);
-    end
-end
-
-%==========================================================================
 
 %==========================================================================
 
@@ -2236,4 +2675,258 @@ angles = [theta, phi]; % [degrees] zenith, azimuth
 projection = [phi_x,phi_y]; % [degrees] x-z plane, y-z plane
 end
 
-%==========================================================================
+function createVideoFromFrames( ...
+    fNames, fTimes, dataDir, varName, ...
+    outputVideoFile, frameRate, ...
+    applyShrink, shrinkfactor, invshrinkfactor, ...
+    applyWindow, windowType, radius_factor, decay_rate, ...
+    instrument, methodName, ...
+    IR_threshold, IR_fillPercentile, ...
+    VIS_lowerPercentile, VIS_upperPercentile, ...
+    VIS_fillPercentile, clipMinHP, clipMaxHP, ...
+    lpWidth20, lpWidth50, lpWidth100, ...
+    Insolation_Correction, ...
+    syntheticWaveMode, ...
+    driftMode, ...
+    time_resolution, ...
+    drift_speed_m_s, driftAngleDeg, ...
+    cphase, wavelength, direction, zamplitude, ...
+    PBLdepth, dB_dzPBL, ...
+    packet_center_x, packet_center_y, ...
+    packet_width_x, packet_width_y, ...
+    DXFactor)
+%CREATEVIDEOFROMFRAMES Creates a video from a sequence of frames,
+% applying the *same* modifications (synthetic waves, drift, preprocessing)
+% that happen in the main processing loop, so the video matches final processed frames.
+%
+% Note: We assume:
+%   - base_frame is the image from the FIRST file or some reference image
+%     used for syntheticWaveMode/drift. If you used "base_frame = data from first frame"
+%     in the main loop, pass that same matrix here.
+%   - The time resolution between frames is time_resolution (seconds).
+%   - Synthetic wave injection and drift logic are exactly as in your main loop.
+%
+
+numFrames = numel(fNames);
+if numFrames == 0
+    fprintf('No frames provided to create video.\n');
+    return;
+end
+
+fprintf('Creating video: %s\n', outputVideoFile);
+
+% --- Initialize Video Writer ---
+try
+    writerObj = VideoWriter(outputVideoFile, 'MPEG-4'); % Using MPEG-4 for compatibility
+    writerObj.FrameRate = frameRate;
+    open(writerObj);
+catch ME
+    fprintf('Error initializing VideoWriter: %s\n', ME.message);
+    fprintf('Video creation failed.\n');
+    return;
+end
+
+% For convenience, store original pixel size in km:
+original_px_km = evalin('base','original_px_km');
+
+% Loop over frames
+for f_idx = 1:numFrames
+    thisFileName = fNames{f_idx};
+    thisFullPath = fullfile(dataDir, thisFileName);
+    thisTime = fTimes(f_idx);
+    fprintf('  Adding frame %d/%d: %s\n', f_idx, numFrames, thisFileName);
+
+    % -- 1) Read raw data --
+    try
+        data = double(ncread(thisFullPath, varName));
+    catch readME
+        fprintf('  Warning: Could not read frame %s. Skipping. Error: %s\n', thisFileName, readME.message);
+        continue; % Skip to next
+    end
+
+    % -- 2) If we do synthetic waves or drift, replicate main-loop logic --
+    %    If f_idx == 1, we store data as base_frame in the main code
+    %    but here we already have it passed in as "base_frame".
+    %    So for f_idx>=2, override "data" with "base_frame" if synthetic is on.
+    if f_idx == 1
+        % We already have base_frame externally. So for consistency:
+        if syntheticWaveMode || driftMode
+            % We typically keep the original data for f_idx=1,
+            base_frame = data;
+            data = base_frame;
+        end
+    elseif f_idx ~= 1
+        % If syntheticWaveMode or driftMode => we re-apply them
+        if syntheticWaveMode || driftMode
+            data = base_frame;  % exactly as in your main loop
+        end
+    end
+
+    % => Synthetic wave injection
+    if syntheticWaveMode
+        % The same injection code from the main loop:
+        [rowsF, colsF] = size(base_frame);
+        [X, Y] = meshgrid(1:colsF, 1:rowsF);
+
+        DX = 1000 * original_px_km * DXFactor;  % pixel size in meters
+        Xm = (X - mean(X(:))) * DX;
+        Ym = (Y - mean(Y(:))) * DX * -1;  % invert if y down
+
+        % --- meteo → math angle conversion (0° = Est, trigonometrical direction) ---
+        theta = deg2rad(90 - direction);    % direction given in meteorological convention
+        
+        % --- wave vector ---
+        k = (2*pi / wavelength) * cos(theta);   % kx
+        l = (2*pi / wavelength) * sin(theta);   % ky  (kept for phase)
+        omega = cphase * (2 * pi / wavelength);
+
+        t = (f_idx - 1) * time_resolution;  % e.g. in seconds
+        phase = k * Xm + l * Ym - omega * t;
+        
+        % k     = (2 * pi / wavelength) * cosd(direction);
+        % l     = (2 * pi / wavelength) * sind(direction);
+        % omega = cphase * (2 * pi / wavelength);
+        % 
+        % t = (f_idx - 1) * time_resolution;  % e.g. in seconds
+        % phase = k * Xm + l * Ym - omega * t;
+
+        dz = zamplitude * sin(phase);
+
+        % Envelope
+        Ampwindow = exp( -(((Xm - packet_center_x) / packet_width_x).^2 ...
+                        + ((Ym - packet_center_y) / packet_width_y).^2) );
+        dz = dz .* Ampwindow;
+
+        % --- horizontal displacement associayted to w' ---
+        dxy = (zamplitude / PBLdepth) * wavelength .* ...
+               sin(phase - pi/2) ./ DX;          % scalar amplitude in px
+        dx  = dxy .* cos(theta).* Ampwindow;                 % composante O-E  (columns)
+        dy  = dxy .* sin(theta).* Ampwindow;                 % composante S-N  (lines)
+
+
+        % Horizontal displacement
+        % dxy = (zamplitude / PBLdepth) * wavelength * sin(phase - pi/2) / DX;
+        % dx = dxy .* cosd(direction) .* Ampwindow;
+        % dy = dxy .* sind(direction) .* Ampwindow;
+
+        XI = X - dx;
+        YI = Y - dy;
+
+        warped_img = interp2(X, Y, base_frame, XI, YI, 'linear', 0);
+        modulated_img = warped_img .* (1 + dz / PBLdepth * dB_dzPBL);
+
+        data = modulated_img;  % final synthetic wave injection
+    end
+
+    % => Drift shift
+    if driftMode && f_idx > 1
+        driftDistance_m = drift_speed_m_s * time_resolution * (f_idx - 1);
+        driftDistance_km = driftDistance_m / 1000;
+        pxShift = driftDistance_km / (original_px_km);  % approximate integer shift
+        pxShift = round(pxShift);
+
+        shift_dx =  pxShift * cosd(driftAngleDeg);
+        shift_dy = -pxShift * sind(driftAngleDeg);
+        shift_dx = round(shift_dx);
+        shift_dy = round(shift_dy);
+
+        data = circshift(data, [shift_dy, shift_dx]);
+    end
+
+    % -- 3) Preprocess frame (identical to main script) --
+    data_pre = preprocessFrame(data, instrument, methodName, ...
+                thisFullPath, thisTime, ...
+                IR_threshold, IR_fillPercentile, ...
+                VIS_lowerPercentile, VIS_upperPercentile, ...
+                VIS_fillPercentile, clipMinHP, clipMaxHP, ...
+                lpWidth20, lpWidth50, lpWidth100, ...
+                Insolation_Correction);
+
+    % -- 4) Optional shrinking/windowing for the video --
+    if applyShrink && shrinkfactor ~= 1
+        data_pre = imresize(data_pre, invshrinkfactor);
+    end
+
+    if applyWindow
+        switch lower(windowType)
+            case 'radial'
+                data_pre = applyRadialWindow(data_pre, radius_factor, decay_rate);
+            case 'rectangular'
+                data_pre = applyRectangularWindow(data_pre, radius_factor, decay_rate);
+        end
+    end
+
+    % Optionally invert IR
+    if strcmpi(instrument,'IR')
+        data_pre = -data_pre;
+    end
+
+    % -- 5) Convert final preprocessed image to a video frame --
+    minVal = min(data_pre(:));
+    maxVal = max(data_pre(:));
+    if maxVal > minVal
+        frame_norm = (data_pre - minVal) / (maxVal - minVal);
+    else
+        frame_norm = zeros(size(data_pre), 'like', data_pre); % handle constant image
+    end
+
+    frame_uint8 = uint8(frame_norm * 255);
+    frame_rgb   = cat(3, frame_uint8, frame_uint8, frame_uint8); % grayscale RGB
+
+    % -- 6) Write the frame to video --
+    try
+        writeVideo(writerObj, frame_rgb);
+    catch writeME
+        fprintf('  Warning: Could not write frame %d. Skipping. Error: %s\n', f_idx, writeME.message);
+        % Optionally close the writer if repeated errors occur
+    end
+end
+
+% --- Finalize Video ---
+try
+    close(writerObj);
+    fprintf('Video creation complete: %s\n', outputVideoFile);
+catch closeME
+    fprintf('Error closing VideoWriter: %s\n', closeME.message);
+end
+end
+
+function newName = makeParallelName(origFullPath, tag)
+%   /path/IR_20231011_1400.nc  + '.spectralpeaks'  -->
+%   /path/IR_20231011_1400.spectralpeaks.nc
+[pathstr,base,~] = fileparts(origFullPath);
+newName = fullfile(pathstr,[base tag '.nc']);
+end
+
+%------------------------------------------------------------------
+function prof = azimProfile(img, cx, cy, radBins)
+% AZIMPROFILE Returns the average radial profile ⟨img⟩(r)
+%
+% prof = azimProfile(img, cx, cy, radBins)
+%
+% img: 2-D image (NaN allowed)
+% cx, cy: center (columns, rows) in pixels
+% radBins: ring bounds [nBins+1 x 1]
+%
+% prof: vector 1×nBins containing azimuth average
+%
+% Notes
+% -----
+% - Ignores NaN with mean(...,'omitnan')
+% - Handles cases where no pixel is present in the ring
+
+    [Ny, Nx] = size(img);
+    [X, Y]   = meshgrid(1:Nx, 1:Ny);
+    R        = hypot(X - cx, Y - cy);
+    
+
+    nBins = numel(radBins)-1;
+    prof  = NaN(1, nBins);
+
+    for k = 1:nBins
+        mask = (R >= radBins(k)) & (R < radBins(k+1));
+        if any(mask(:))
+            prof(k) = mean(img(mask), 'omitnan');
+        end
+    end
+end
